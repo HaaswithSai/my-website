@@ -1,0 +1,143 @@
+{
+  "version": "1.0.0",
+  "taxonomy_name": "Multi-Agent Coordination Failure Taxonomy",
+  "description": "A falsifiable ontology of the 6 ways multi-agent LLM systems fail at coordination. Each definition permits a clear yes/no judgment given a transcript.",
+  "failure_modes": [
+    {
+      "id": "F1",
+      "name": "Echo Chamber",
+      "short_label": "echo_chamber",
+      "definition": "Agents converge to agreement before evidence supports it, and the final answer is wrong. Agreement is driven by social pressure or anchoring on the first agent's output rather than by new shared evidence.",
+      "falsifiable_criterion": "The disagreement rate drops to zero while the evidence base is still unexplored, AND the final answer is incorrect.",
+      "distinguishing_notes": "Echo Chamber vs. Genuine Consensus: Genuine consensus is valid when agreement is reached AFTER all agents have surfaced their private evidence and the conclusion logically follows. Echo Chamber is flagged when at least one agent reverses a previously stated position without citing new evidence from another agent.",
+      "detection_strategy": {
+        "type": "hybrid",
+        "rule_signal": "Disagreement rate metric: count turns where agent explicitly contradicts prior agent divided by total turns. If this drops below 0.05 before turn 6, flag for LLM review.",
+        "llm_judge_prompt_hint": "Did any agent abandon a stated position without citing new evidence from another agent? Answer yes/no and cite the specific turn.",
+        "severity_levels": {
+          "low": "Agents converge early but answer is correct.",
+          "medium": "Agents converge early, answer is incorrect, but convergence is traceable to a shared evidence artifact.",
+          "high": "Agents converge early, answer is incorrect, and no new evidence was introduced before convergence."
+        }
+      },
+      "task_families_most_susceptible": ["F6_convergence_traps", "F1_distributed_evidence"],
+      "example_transcript_pattern": "Agent A proposes answer X. Agent B says 'I agree with Agent A, X seems right.' Agent C says 'Yes, X.' Final answer: X (incorrect). Agent B's private evidence contradicting X was never surfaced."
+    },
+    {
+      "id": "F2",
+      "name": "Information Silo",
+      "short_label": "info_silo",
+      "definition": "Critical private information known to one agent never gets communicated to the rest of the team, causing the team to reason from an incomplete evidence base.",
+      "falsifiable_criterion": "Agent X held private fact P (visible in their initial context). Fact P does not appear in any message sent by Agent X to the shared thread. The correct answer requires fact P.",
+      "distinguishing_notes": "Only counts if the siloed information was (a) private to that agent, (b) relevant to the final answer, and (c) never transmitted in any form. Partial transmission (paraphrase that loses a key number) is classified as F5 Handoff Corruption instead.",
+      "detection_strategy": {
+        "type": "rule_based",
+        "rule_signal": "For each agent, extract named entities and numeric values from their private context. Check whether those entities/values appear anywhere in that agent's outbound messages. Missing coverage = candidate silo.",
+        "llm_judge_prompt_hint": "Agent X was given the following private facts: [list]. Do any of these facts appear, in any form, in Agent X's messages to the group? Answer yes/no per fact.",
+        "severity_levels": {
+          "low": "Siloed fact is supplementary; team arrives at correct answer anyway.",
+          "medium": "Siloed fact would have changed the reasoning path but not the final answer.",
+          "high": "Siloed fact is decisive; its absence directly caused the wrong answer."
+        }
+      },
+      "task_families_most_susceptible": ["F1_distributed_evidence", "F3_sequential_handoffs"],
+      "example_transcript_pattern": "Agent A has private context: 'API rate limit is 100 req/min'. Agent A never mentions the rate limit. Agent B proposes a solution requiring 500 req/min. Team accepts it. System fails in production."
+    },
+    {
+      "id": "F3",
+      "name": "Role Drift",
+      "short_label": "role_drift",
+      "definition": "An agent abandons its assigned functional role for 2 or more consecutive turns, producing outputs inconsistent with its role specification.",
+      "falsifiable_criterion": "Agent was assigned role R. For 2+ consecutive turns, agent's output is classifiable under a different role R' and NOT under role R. A single-turn deviation is not drift.",
+      "distinguishing_notes": "Role Drift vs. Helpful Flexibility: A one-turn deviation where the agent adds value outside its role and then returns to its role is NOT drift. Drift requires 2+ consecutive turns of role abandonment. A Critic who approves everything (never critiques) is drifting even if they stay 'on-topic'.",
+      "detection_strategy": {
+        "type": "hybrid",
+        "rule_signal": "Map each turn to a role category using keyword classifiers (e.g., Critic role = contains challenge/flaw/however/concern; Proposer = contains suggest/propose/recommend). Flag consecutive turns where role label mismatches assigned role.",
+        "llm_judge_prompt_hint": "Agent X is assigned the role of [ROLE]. Review turns [N] and [N+1]. Does Agent X's output in each turn match the expected behavior of [ROLE]? Answer yes/no per turn with reasoning.",
+        "severity_levels": {
+          "low": "Agent drifts for exactly 2 turns, returns to role, team succeeds.",
+          "medium": "Agent drifts for 3-4 turns; another agent partially compensates.",
+          "high": "Agent drifts for 5+ turns or for majority of the task; assigned role function goes unfulfilled."
+        }
+      },
+      "task_families_most_susceptible": ["F4_role_constrained"],
+      "example_transcript_pattern": "Critic agent assigned to challenge proposals. Turns 3-6: Critic says 'Great idea!', 'I support this approach', 'This looks good to me', 'I agree with the proposal'. No critiques issued. Proposer's flawed plan is accepted without challenge."
+    },
+    {
+      "id": "F4",
+      "name": "Dominant Agent Silencing",
+      "short_label": "dominant_agent",
+      "definition": "One agent contributes more than 60% of substantive content by token count, AND at least one other agent's unique private contributions are absent from the final answer.",
+      "falsifiable_criterion": "Agent X's messages account for >60% of total non-boilerplate tokens. At least one other agent Y contributed unique information that does not appear in the final answer.",
+      "distinguishing_notes": "High token count alone is not silencing if (a) that agent has disproportionate private evidence, or (b) other agents' contributions ARE reflected in the final answer. Both conditions must hold.",
+      "detection_strategy": {
+        "type": "rule_based",
+        "rule_signal": "Per-agent token count excluding system/acknowledgment messages. Dominance flag if any single agent > 60% of substantive tokens. Then check final answer for presence of other agents' unique facts.",
+        "llm_judge_prompt_hint": "Agent Y said [unique claim]. Does this claim appear, in any form, in the final answer or the reasoning leading to it? Answer yes/no.",
+        "severity_levels": {
+          "low": "Dominant agent > 60% but other agents' key facts appear in final answer.",
+          "medium": "Dominant agent > 70%, some other agent contributions missing from final answer.",
+          "high": "Dominant agent > 80%, other agents' unique contributions entirely absent from final answer, answer is wrong."
+        }
+      },
+      "task_families_most_susceptible": ["F4_role_constrained", "F2_incompatible_parallel"],
+      "example_transcript_pattern": "Agent A writes 800 tokens per turn. Agent B writes 50 tokens and is routinely ignored. Agent B identified a security flaw in turn 2. Final answer omits security considerations. Agent A's framing dominates throughout."
+    },
+    {
+      "id": "F5",
+      "name": "Handoff Corruption",
+      "short_label": "handoff_corruption",
+      "definition": "Facts, numbers, or claims get distorted as they pass between agents in a sequential pipeline — values change, claims get dropped, or new incorrect claims get hallucinated at handoff boundaries.",
+      "falsifiable_criterion": "Claim C appears in Agent A's message at turn T. In Agent B's message referencing that claim at turn T+1 or later, C is either (a) absent, (b) numerically different, or (c) logically inverted/distorted.",
+      "distinguishing_notes": "Only applies to sequential pipelines (A→B→C structures). In concurrent agent settings, missing information is classified as F2 Information Silo. A claim must be verifiably traceable to detect corruption.",
+      "detection_strategy": {
+        "type": "rule_based",
+        "rule_signal": "Extract all numeric values, named entities, and boolean claims from each agent's output. At each handoff boundary, diff the claim set. Flag additions (hallucinations) and modifications (corruption) and deletions (drops).",
+        "llm_judge_prompt_hint": "Agent A stated [claim] at turn [N]. At turn [N+1] or later, how does Agent B represent this claim? Is it (a) accurately reproduced, (b) modified, (c) dropped, or (d) contradicted?",
+        "severity_levels": {
+          "low": "Minor paraphrase that loses non-critical detail.",
+          "medium": "Numeric value changes by more than 10% or a secondary claim is dropped.",
+          "high": "Critical fact is inverted, a key number changes significantly, or a decisive fact is hallucinated."
+        }
+      },
+      "task_families_most_susceptible": ["F3_sequential_handoffs"],
+      "example_transcript_pattern": "Agent A: 'The budget is $50,000 and deadline is Q3.' Agent B (summarizing for Agent C): 'We have a $500,000 budget.' Agent C designs an expensive solution. Budget overrun on execution."
+    },
+    {
+      "id": "F6",
+      "name": "Stagnation Loop",
+      "short_label": "stagnation_loop",
+      "definition": "Agents cycle through the same content without making progress, producing semantically near-identical turns for 3 or more consecutive exchanges.",
+      "falsifiable_criterion": "Cosine similarity of turn embeddings exceeds 0.92 for 3 or more consecutive agent turns, AND no new facts, proposals, or decisions appear in those turns.",
+      "distinguishing_notes": "High cosine similarity alone is not stagnation if the repetition is a structured confirmation step (e.g., each agent formally voting on a decision). The content must also lack any new propositions.",
+      "detection_strategy": {
+        "type": "rule_based",
+        "rule_signal": "Embed each agent turn using a sentence embedding model. Compute cosine similarity between consecutive turns. If similarity > 0.92 for 3+ consecutive pairs, flag as stagnation loop.",
+        "llm_judge_prompt_hint": "Review turns [N], [N+1], [N+2]. Does any turn introduce a new fact, proposal, question, or decision not present in the previous turn? Answer yes/no per turn.",
+        "threshold": {
+          "cosine_similarity_cutoff": 0.92,
+          "consecutive_turns_required": 3
+        },
+        "severity_levels": {
+          "low": "Loop of 3 turns; agents self-correct and break out.",
+          "medium": "Loop of 4-6 turns; requires external prompt or turn limit to break.",
+          "high": "Loop of 7+ turns or task times out in loop state."
+        }
+      },
+      "task_families_most_susceptible": ["F5_resource_contention", "F6_convergence_traps"],
+      "example_transcript_pattern": "Agent A: 'I think we should use approach X.' Agent B: 'I also think approach X is appropriate.' Agent A: 'Yes, approach X seems best.' Agent B: 'Agreed, X is the way forward.' No action taken. Task stalls."
+    }
+  ],
+  "inter_failure_mode_rules": {
+    "F1_vs_F6": "Echo Chamber (F1) requires a wrong final answer. Stagnation Loop (F6) requires no progress. A team can be in a stagnation loop while the answer remains open (F6 only), or converge quickly to a wrong answer without looping (F1 only). Both can co-occur if a loop ends in premature wrong consensus.",
+    "F2_vs_F5": "Information Silo (F2) is non-transmission: the fact never leaves Agent X. Handoff Corruption (F5) is mis-transmission: the fact was sent but distorted. Mutually exclusive per individual fact, but both can occur in the same transcript for different facts.",
+    "F3_vs_helpful_flexibility": "Role Drift requires 2+ consecutive off-role turns. A single off-role turn that adds value and is followed by return to role is NOT drift.",
+    "F4_vs_natural_leadership": "Dominant Agent Silencing requires BOTH token dominance AND silenced contributions in the final answer. A naturally more capable agent writing more is not silencing if others' insights are incorporated."
+  },
+  "validation_requirements": {
+    "human_annotator_count": 3,
+    "held_out_transcripts": 50,
+    "minimum_cohen_kappa": 0.65,
+    "annotation_schema": "binary per failure mode per transcript (0/1), plus severity (0/1/2) and turn_indices where failure occurred"
+  }
+}

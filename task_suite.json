@@ -1,0 +1,2229 @@
+{
+  "version": "1.0.0",
+  "suite_name": "Multi-Agent Coordination Benchmark — Task Suite (Coding Domain)",
+  "description": "60 tasks across 6 coordination families. Each task is engineered so a solo frontier agent fails ≥80% of the time but a properly-coordinating team can succeed. All tasks are in the software engineering domain.",
+  "solo_agent_firewall": "Each task must be run 10 times against a solo frontier model before inclusion. Tasks passing more than 2/10 solo runs are excluded. solo_baseline_results field must be populated before a task is considered active.",
+  "task_families": [
+    {
+      "family_id": "TF1",
+      "family_name": "Distributed Evidence",
+      "description": "Each agent gets a different slice of evidence. Shared evidence is misleading. Only combined private evidence leads to the correct answer.",
+      "coordination_force": "Agents must surface and share unique information rather than default to the obvious shared conclusion.",
+      "failure_modes_targeted": ["F1", "F2"]
+    },
+    {
+      "family_id": "TF2",
+      "family_name": "Incompatible Parallel Work",
+      "description": "Two agents build components that must fit together without full context on what the other is building.",
+      "coordination_force": "Agents must negotiate interfaces explicitly before or during implementation.",
+      "failure_modes_targeted": ["F2", "F4", "F5"]
+    },
+    {
+      "family_id": "TF3",
+      "family_name": "Sequential Handoffs",
+      "description": "Agents work in a pipeline (A→B→C). Critical facts must survive the chain intact.",
+      "coordination_force": "Each agent must faithfully transmit what they received plus their contribution.",
+      "failure_modes_targeted": ["F5"]
+    },
+    {
+      "family_id": "TF4",
+      "family_name": "Role-Constrained Work",
+      "description": "Agents have strict roles (e.g., Architect, Implementer, Security Auditor, Reviewer). All roles must function for the task to succeed.",
+      "coordination_force": "Role integrity must be maintained; abandoning a role causes the team to fail.",
+      "failure_modes_targeted": ["F3", "F4"]
+    },
+    {
+      "family_id": "TF5",
+      "family_name": "Resource Contention",
+      "description": "Two agents both need to modify the same resource (shared file, API schema, database). Uncoordinated access causes conflicts.",
+      "coordination_force": "Agents must negotiate turn-taking or locking protocols.",
+      "failure_modes_targeted": ["F6"]
+    },
+    {
+      "family_id": "TF6",
+      "family_name": "Convergence Traps",
+      "description": "There is a tempting but wrong early answer. Teams that rush to consensus fail; teams that maintain productive disagreement find the correct answer.",
+      "coordination_force": "Agents must resist premature closure and maintain productive disagreement.",
+      "failure_modes_targeted": ["F1", "F6"]
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": "T01",
+      "family": "TF1",
+      "title": "Distributed Bug Root Cause",
+      "description": "A production system is throwing intermittent 500 errors. Three agents each receive a different log slice: Agent A gets application logs, Agent B gets database query logs, Agent C gets infrastructure/network logs. The shared context (visible to all) incorrectly suggests a memory leak. The true root cause (a race condition in a DB transaction under network latency spikes) is only discoverable by combining all three private log slices.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Application Log Analyst",
+          "private_context": "App logs showing requests timing out at exactly the 30s mark. Timeout pattern only occurs during concurrent write operations. No OOM errors in logs — memory is stable.",
+          "shared_context": "System has been showing increased memory usage trend over 2 weeks (misleading — it's normal growth, not a leak)."
+        },
+        {
+          "agent_id": "B",
+          "role": "Database Log Analyst",
+          "private_context": "DB logs showing SELECT FOR UPDATE locks being held for 28-31 seconds. Deadlock detector never fires because lock is released just before the 30s timeout. Only occurs when 3+ concurrent sessions hit the same row.",
+          "shared_context": "System has been showing increased memory usage trend over 2 weeks."
+        },
+        {
+          "agent_id": "C",
+          "role": "Infrastructure Analyst",
+          "private_context": "Network logs showing 200-800ms latency spikes on DB host NIC every 45-90 seconds. Latency spikes correlate with timeout events within ±2 seconds. Physical NIC driver issue identified in kernel logs.",
+          "shared_context": "System has been showing increased memory usage trend over 2 weeks."
+        }
+      ],
+      "ground_truth": {
+        "root_cause": "Race condition: concurrent DB transactions hold SELECT FOR UPDATE locks; NIC latency spikes extend lock duration past the application 30s timeout. Fix: (1) replace NIC driver, (2) reduce lock scope in transaction, (3) add retry logic with exponential backoff.",
+        "incorrect_decoy": "Memory leak requiring application restart or heap tuning."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["SELECT FOR UPDATE", "lock", "NIC", "network latency", "race condition", "concurrent"],
+        "forbidden_elements_in_final_answer": ["memory leak as root cause"],
+        "scoring": "pass if ≥4 required_elements present AND forbidden_elements absent"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "hard",
+      "estimated_turns": 8
+    },
+    {
+      "task_id": "T02",
+      "family": "TF1",
+      "title": "Security Vulnerability Triage",
+      "description": "A codebase has a reported vulnerability. Agent A has the SAST scanner output, Agent B has the runtime behavior logs, Agent C has the dependency audit report. Shared context (CVE description) points to a known library issue. True vulnerability is an internal logic flaw that interacts with the library only under specific runtime conditions revealed in B's logs.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Static Analysis Reviewer",
+          "private_context": "SAST flags 3 issues: (1) SQL query built with string concat in user_controller.py line 142, (2) weak random in session token gen, (3) missing input validation on file upload endpoint. CVE-2024-XXXX in cryptography library NOT flagged by SAST (no direct call detected).",
+          "shared_context": "CVE-2024-XXXX affects cryptography library v3.4.x, potentially allowing key material exposure."
+        },
+        {
+          "agent_id": "B",
+          "role": "Runtime Behavior Analyst",
+          "private_context": "Logs show the file upload endpoint (SAST issue #3) passes filenames directly to a subprocess.call() without sanitization. When filename contains semicolons, arbitrary commands execute. This is triggered by 3 user accounts in the last 7 days — active exploitation.",
+          "shared_context": "CVE-2024-XXXX affects cryptography library v3.4.x, potentially allowing key material exposure."
+        },
+        {
+          "agent_id": "C",
+          "role": "Dependency Auditor",
+          "private_context": "cryptography library is v3.4.1 (vulnerable). However, application only uses it for certificate verification — key generation happens in a separate HSM. CVE-2024-XXXX is NOT exploitable in this deployment. Application also uses parameterized queries everywhere except user_controller.py line 142.",
+          "shared_context": "CVE-2024-XXXX affects cryptography library v3.4.x, potentially allowing key material exposure."
+        }
+      ],
+      "ground_truth": {
+        "priority_vulnerability": "Command injection via unsanitized filename in file upload endpoint (subprocess.call). Actively exploited. Fix immediately.",
+        "secondary": "SQL injection in user_controller.py line 142. Fix in next sprint.",
+        "non_issue": "CVE-2024-XXXX — not exploitable in this deployment due to HSM architecture.",
+        "incorrect_decoy": "CVE-2024-XXXX as top priority."
+      },
+      "programmatic_evaluator": {
+        "type": "ranked_output",
+        "required_top_priority": "command injection OR subprocess OR file upload",
+        "required_secondary": "SQL injection OR user_controller",
+        "required_deprioritization": "CVE OR cryptography NOT exploitable",
+        "scoring": "pass if top priority correctly identified AND CVE correctly deprioritized"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "hard",
+      "estimated_turns": 10
+    },
+    {
+      "task_id": "T03",
+      "family": "TF1",
+      "title": "Performance Regression Attribution",
+      "description": "A service's P99 latency jumped 3x after a deployment. Agent A has the git diff for all changed files. Agent B has profiling data from the new version. Agent C has the infrastructure change log. Shared context blames an algorithm change (decoy). True cause requires combining all three.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Code Change Analyst",
+          "private_context": "Git diff shows: (1) sorting algorithm changed from quicksort O(n log n) to bubble sort O(n²) in data_processor.py — visible and suspicious. (2) A config loader was changed to read from remote config service on every request instead of caching — subtle, in config_manager.py line 67.",
+          "shared_context": "Deployment included a data processing algorithm optimization attempt."
+        },
+        {
+          "agent_id": "B",
+          "role": "Performance Profiler",
+          "private_context": "Profiling shows: data_processor.py sort accounts for 8% of latency (negligible for dataset sizes in production). config_manager.py remote call accounts for 61% of latency. Remote config service P99 is 800ms.",
+          "shared_context": "Deployment included a data processing algorithm optimization attempt."
+        },
+        {
+          "agent_id": "C",
+          "role": "Infrastructure Analyst",
+          "private_context": "Infrastructure log: the remote config service used by config_manager.py is cross-region. Traffic goes us-east-1 → eu-west-1. This routing was NOT intentional — it's a misconfigured endpoint URL in the deployment config. Same-region endpoint is available at a different URL.",
+          "shared_context": "Deployment included a data processing algorithm optimization attempt."
+        }
+      ],
+      "ground_truth": {
+        "root_cause": "config_manager.py was changed to call remote config service on every request. The endpoint is misconfigured to route cross-region (800ms P99). Fix: restore caching in config_manager.py OR update endpoint URL to same-region service.",
+        "incorrect_decoy": "Bubble sort O(n²) causing regression."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["config_manager", "remote config", "cache", "cross-region OR endpoint URL"],
+        "forbidden_elements_in_final_answer": ["bubble sort as primary cause", "algorithm as root cause"],
+        "scoring": "pass if ≥3 required_elements present AND forbidden_elements absent from recommended fix"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 7
+    },
+    {
+      "task_id": "T04",
+      "family": "TF1",
+      "title": "Distributed System Consistency Bug",
+      "description": "An e-commerce platform has intermittent double-charge bugs. Three agents receive different system slice data. True cause is only visible by combining all evidence.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Payment Service Analyst",
+          "private_context": "Payment service logs show idempotency key is generated per-request using UUID v4. However, on network timeout, the client retries and generates a NEW idempotency key for the retry (bug in client SDK v2.3.1). Key uniqueness is correct; retry logic is broken.",
+          "shared_context": "Double charges occur at rate of ~0.02% of transactions. Higher during peak load."
+        },
+        {
+          "agent_id": "B",
+          "role": "Network/Infrastructure Analyst",
+          "private_context": "Network logs show payment gateway has P99 timeout of 4.2 seconds. Client SDK timeout is set to 3 seconds — causing spurious timeouts even when payment succeeds. Gateway processes payment before timeout; client thinks it failed.",
+          "shared_context": "Double charges occur at rate of ~0.02% of transactions. Higher during peak load."
+        },
+        {
+          "agent_id": "C",
+          "role": "Client SDK Analyst",
+          "private_context": "SDK v2.3.1 source: on timeout exception, retry block re-initializes PaymentRequest object which calls UUID.randomUUID() for idempotency_key in constructor. Fix exists in v2.3.2 (idempotency key is now passed in constructor, not generated). Client is on v2.3.1.",
+          "shared_context": "Double charges occur at rate of ~0.02% of transactions. Higher during peak load."
+        }
+      ],
+      "ground_truth": {
+        "fix": "Upgrade client SDK to v2.3.2 (idempotency key preserved across retries). Also increase client timeout to 6s (above gateway P99). Both required — timeout causes spurious retries, SDK bug causes new idempotency key on retry.",
+        "incorrect_decoy": "Payment service idempotency implementation is broken."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["SDK v2.3.2 OR upgrade SDK", "idempotency key", "timeout", "retry"],
+        "scoring": "pass if all 4 required elements present in recommended fix"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "hard",
+      "estimated_turns": 10
+    },
+    {
+      "task_id": "T05",
+      "family": "TF1",
+      "title": "Data Pipeline Correctness Audit",
+      "description": "A ML training pipeline produces models with degraded accuracy after a migration. Each agent has a different stage's logs and schemas. True corruption point requires all three data slices.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Data Ingestion Analyst",
+          "private_context": "Ingestion logs: raw data is correct. Timestamps are UTC. Null handling: missing values encoded as -999 (documented in schema v2). No data loss at ingestion. 1.2M records ingested correctly.",
+          "shared_context": "Model accuracy dropped from 0.91 AUC to 0.74 AUC after migrating to new data pipeline."
+        },
+        {
+          "agent_id": "B",
+          "role": "Feature Engineering Analyst",
+          "private_context": "Feature pipeline: the normalization step reads the 'missing value sentinel' from a config file. Config file was NOT updated for schema v2 — it still uses -1 as missing sentinel (schema v1). Values of -999 are being treated as valid data and normalized to 3.2 standard deviations below mean. This corrupts ~8% of records.",
+          "shared_context": "Model accuracy dropped from 0.91 AUC to 0.74 AUC after migrating to new data pipeline."
+        },
+        {
+          "agent_id": "C",
+          "role": "Training Pipeline Analyst",
+          "private_context": "Training logs are clean. Model is training correctly on whatever features it receives. Validation set is held out from the SAME corrupted pipeline, so validation metrics do not reveal the corruption (train and val both corrupt). Only holdout test set (external) shows degradation.",
+          "shared_context": "Model accuracy dropped from 0.91 AUC to 0.74 AUC after migrating to new data pipeline."
+        }
+      ],
+      "ground_truth": {
+        "root_cause": "Feature engineering config not updated for schema v2. Missing sentinel is -1 (old) but data uses -999 (new). -999 values treated as valid extreme data, corrupting ~8% of records. Fix: update feature pipeline config missing_sentinel to -999.",
+        "incorrect_decoy": "Training pipeline or model architecture issue."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["sentinel OR missing value", "-999", "config", "feature pipeline OR normalization"],
+        "scoring": "pass if ≥3 required_elements present in diagnosis"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "hard",
+      "estimated_turns": 9
+    },
+    {
+      "task_id": "T06",
+      "family": "TF1",
+      "title": "API Contract Mismatch Detection",
+      "description": "Two microservices are failing in production. Agents each hold one service's spec and logs. Root cause is a subtle contract mismatch invisible from either spec alone.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Service A Analyst",
+          "private_context": "Service A (Order Service) API spec: POST /orders returns {order_id: string, status: string, created_at: ISO8601_string}. Service A logs show all responses correctly include created_at in ISO 8601 format with timezone offset (e.g., '2024-01-15T10:30:00+05:30').",
+          "shared_context": "Order fulfillment pipeline failing with parse errors. Error rate: 12%. Pattern unclear."
+        },
+        {
+          "agent_id": "B",
+          "role": "Service B Analyst",
+          "private_context": "Service B (Fulfillment Service) code: expects created_at as Unix timestamp integer for scheduling calculations. Uses parseInt(response.created_at) to parse. parseInt('2024-01-15T10:30:00+05:30') returns 2024 (only parses leading digits). All scheduling calculations use epoch 2024 (Jan 1, 1970 00:33:44) — 54 years in the past. 12% error rate matches orders where scheduling time matters.",
+          "shared_context": "Order fulfillment pipeline failing with parse errors. Error rate: 12%. Pattern unclear."
+        }
+      ],
+      "ground_truth": {
+        "root_cause": "Service A returns ISO 8601 string; Service B expects Unix timestamp integer. parseInt() silently parses only leading year digits. Fix: align contract — either Service A returns Unix timestamp, or Service B uses Date.parse() instead of parseInt().",
+        "incorrect_decoy": "Network or authentication issue."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["ISO 8601 OR datetime format", "Unix timestamp OR integer", "parseInt OR parse", "contract OR schema mismatch"],
+        "scoring": "pass if ≥3 required_elements in diagnosis"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 6
+    },
+    {
+      "task_id": "T07",
+      "family": "TF1",
+      "title": "Cascading Failure Attribution in Microservices",
+      "description": "A system-wide outage is attributed to Service C failing. But Service C's failure was caused by Service A's change, visible only by combining all three agents' private monitoring data.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Auth Service Analyst",
+          "private_context": "Auth service deployed new JWT validation at 14:32. New validation requires 'aud' claim in token. Old tokens (without 'aud') now rejected with 401. Auth service itself is healthy — 0 errors in its own metrics.",
+          "shared_context": "System outage at 14:35. Service C (Payment) reporting 100% error rate. Incident bridge open."
+        },
+        {
+          "agent_id": "B",
+          "role": "API Gateway Analyst",
+          "private_context": "Gateway logs at 14:33: payment requests forwarded with existing session tokens (no 'aud' claim — issued before 14:32). Auth service returning 401 for all these tokens. Gateway correctly propagating 401 to payment service as authentication failures. Gateway itself is working correctly.",
+          "shared_context": "System outage at 14:35. Service C (Payment) reporting 100% error rate. Incident bridge open."
+        },
+        {
+          "agent_id": "C",
+          "role": "Payment Service Analyst",
+          "private_context": "Payment service receives 401 from auth validation. Payment service error handling for 401: enters exponential backoff retry loop (bug: should fail fast on 401, not retry). Retry loop exhausts connection pool. Circuit breaker not configured for auth errors. Service becomes unresponsive.",
+          "shared_context": "System outage at 14:35. Service C (Payment) reporting 100% error rate. Incident bridge open."
+        }
+      ],
+      "ground_truth": {
+        "root_cause": "Auth service breaking change (required 'aud' claim) invalidated existing session tokens → 401 cascade → payment service retry bug exhausted connection pool. Immediate fix: roll back auth change OR issue new tokens with 'aud'. Secondary fix: payment service should fail-fast on 401, not retry.",
+        "incorrect_decoy": "Payment service code bug is the root cause."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["auth service OR JWT", "'aud' claim OR breaking change", "rollback", "retry OR connection pool"],
+        "scoring": "pass if ≥3 required_elements present and auth service identified as origin"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "hard",
+      "estimated_turns": 10
+    },
+    {
+      "task_id": "T08",
+      "family": "TF1",
+      "title": "Test Coverage Gap Analysis",
+      "description": "A critical bug reached production despite 94% test coverage. Three agents hold coverage data, the bug report, and the test design history. True gap is only visible by combining all.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Coverage Analyst",
+          "private_context": "Coverage report: checkout_flow.py 97% line coverage, 89% branch coverage. Uncovered branches: (1) network timeout handler (line 445), (2) concurrent_session check (line 203 — only covered by 1 test).",
+          "shared_context": "Bug report: users occasionally charged twice during checkout. Reported rate: 0.03%."
+        },
+        {
+          "agent_id": "B",
+          "role": "Bug Forensics Analyst",
+          "private_context": "Bug reproduces when: (1) network timeout occurs during payment confirmation AND (2) user clicks 'Pay' again within 5 seconds AND (3) session is still active. Requires concurrent sessions. Cannot reproduce single-threaded.",
+          "shared_context": "Bug report: users occasionally charged twice during checkout. Reported rate: 0.03%."
+        },
+        {
+          "agent_id": "C",
+          "role": "Test Design Analyst",
+          "private_context": "Test history: concurrent_session check (line 203) is tested by test_concurrent_checkout which runs sequentially (mock doesn't simulate true concurrency). Network timeout test (line 445) tests timeout but doesn't combine it with retry. No integration tests combine timeout + retry + concurrent session.",
+          "shared_context": "Bug report: users occasionally charged twice during checkout. Reported rate: 0.03%."
+        }
+      ],
+      "ground_truth": {
+        "gap": "No test combines network timeout + user retry + concurrent session. Individual branches are covered; their combination is not. Fix: add integration test simulating concurrent checkout with network timeout injection.",
+        "incorrect_decoy": "Insufficient overall test coverage percentage."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["concurrent", "timeout", "combination OR integration test", "concurrent_session"],
+        "scoring": "pass if all 4 elements present in diagnosis"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "hard",
+      "estimated_turns": 9
+    },
+    {
+      "task_id": "T09",
+      "family": "TF1",
+      "title": "Flaky Test Root Cause",
+      "description": "A CI pipeline has a test that fails 15% of runs. Four agents hold different diagnostic slices. True cause requires all.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Test Code Analyst",
+          "private_context": "Test code: test_data_processor asserts output list is sorted ascending. Uses assert output == sorted(output). Test generates input with random.shuffle() using no fixed seed.",
+          "shared_context": "test_data_processor fails 15% of CI runs. Passes locally 100% of the time."
+        },
+        {
+          "agent_id": "B",
+          "role": "Runtime Environment Analyst",
+          "private_context": "CI runs on containers with Python 3.11. Local dev is Python 3.9. Python 3.11 changed sort stability guarantees for equal elements — elements with same sort key now preserve insertion order from a DIFFERENT algorithm path, causing different output ordering for equal-key elements.",
+          "shared_context": "test_data_processor fails 15% of CI runs. Passes locally 100% of the time."
+        },
+        {
+          "agent_id": "C",
+          "role": "Data Analyst",
+          "private_context": "The test data generated by random.shuffle includes ~15% of cases where two elements have equal sort keys (e.g., same timestamp, different IDs). These are the exact cases that trigger the Python version sort-stability difference.",
+          "shared_context": "test_data_processor fails 15% of CI runs. Passes locally 100% of the time."
+        }
+      ],
+      "ground_truth": {
+        "root_cause": "15% of random inputs have equal-key elements. Python 3.11 (CI) vs 3.9 (local) handle equal-key sort order differently. Test assertion is too strict for equal-key elements. Fix: pin Python version in CI, OR make test assertion stable-sort-aware, OR add fixed random seed.",
+        "incorrect_decoy": "Random seed causing non-determinism (incomplete — doesn't explain CI vs local discrepancy)."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["Python version OR 3.11 OR 3.9", "sort stability OR equal key", "CI vs local"],
+        "scoring": "pass if ≥2 required_elements in diagnosis"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 7
+    },
+    {
+      "task_id": "T10",
+      "family": "TF1",
+      "title": "Secrets Exposure Audit",
+      "description": "A security audit found credentials in logs. Agents hold different system slices. True exposure vector requires all.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Application Code Analyst",
+          "private_context": "Code review: API keys are stored in environment variables, not hardcoded. Logging framework is configured to mask values matching pattern 'API_KEY_*'. No explicit logging of credentials found in code search.",
+          "shared_context": "Security scan found API credentials in production logs. Compliance violation."
+        },
+        {
+          "agent_id": "B",
+          "role": "Logging Infrastructure Analyst",
+          "private_context": "Log aggregation pipeline: logs are shipped via Fluentd → Elasticsearch. Fluentd config includes a 'record_transformer' filter that flattens nested objects to key=value pairs. The masking happens BEFORE Fluentd but the transformer re-exposes masked fields by extracting them from a 'request_dump' field that wasn't masked.",
+          "shared_context": "Security scan found API credentials in production logs. Compliance violation."
+        },
+        {
+          "agent_id": "C",
+          "role": "Request Handling Analyst",
+          "private_context": "HTTP request handler: in debug mode (enabled in production by accident — env var DEBUG=true set during incident response last month, never cleared), the handler logs the full request object including headers. Authorization headers contain bearer tokens. These go into 'request_dump' field.",
+          "shared_context": "Security scan found API credentials in production logs. Compliance violation."
+        }
+      ],
+      "ground_truth": {
+        "root_cause": "DEBUG=true left enabled in production → full request headers logged to request_dump field → Fluentd record_transformer extracts and re-exposes masked fields. Fix: (1) set DEBUG=false, (2) mask request_dump field in Fluentd, (3) audit other environments for DEBUG flag.",
+        "incorrect_decoy": "Hardcoded credentials in application code."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["DEBUG OR debug mode", "Fluentd OR log pipeline", "request_dump OR headers", "mask"],
+        "scoring": "pass if ≥3 required_elements in fix recommendation"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "hard",
+      "estimated_turns": 10
+    },
+    {
+      "task_id": "T11",
+      "family": "TF2",
+      "title": "Microservice API Contract Design",
+      "description": "Agent A builds a User Service REST API. Agent B builds an Order Service that must consume it. They must negotiate the contract. Agent A doesn't know B's pagination requirements; Agent B doesn't know A's auth model.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "User Service Developer",
+          "private_context": "User Service tech stack: FastAPI, async. Auth: OAuth2 Bearer tokens. User objects have: id (UUID), email, roles (list), created_at, last_login, preferences (nested JSON). Rate limits: 1000 req/min per client. Supports cursor-based pagination only (no offset). Max page size: 50.",
+          "shared_context": "Build a user data API that the Order Service will consume to enrich order records."
+        },
+        {
+          "agent_id": "B",
+          "role": "Order Service Developer",
+          "private_context": "Order Service: Node.js, uses offset-based pagination internally. Needs to fetch user data for order enrichment. Requires: user_id, email, display_name (not in User Service schema), account_status. Needs to batch fetch up to 200 users at once for order list views. SLA: 100ms P99.",
+          "shared_context": "Build a user data API that the Order Service will consume to enrich order records."
+        }
+      ],
+      "ground_truth": {
+        "required_negotiations": [
+          "Pagination: A uses cursor-based (max 50); B needs offset and up to 200. Resolution: either A adds batch endpoint OR B adapts to cursor with multiple requests.",
+          "display_name: not in A's schema. Must be added or B uses email as display_name.",
+          "account_status: not in A's schema. Must be added.",
+          "Auth: B must implement OAuth2 Bearer token.",
+          "Batch endpoint: B needs 200-user batch; A's max is 50. Needs explicit negotiation."
+        ],
+        "valid_contract_must_include": "batch endpoint OR pagination strategy, display_name field, account_status field, auth mechanism"
+      },
+      "programmatic_evaluator": {
+        "type": "schema_check",
+        "required_in_final_contract": ["display_name", "account_status", "batch OR pagination strategy explicitly resolved", "auth"],
+        "scoring": "pass if all 4 required elements present in final agreed contract"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 8
+    },
+    {
+      "task_id": "T12",
+      "family": "TF2",
+      "title": "Shared Database Schema Design",
+      "description": "Agent A builds the write path (ingestion service). Agent B builds the read path (analytics service). They must agree on a database schema that serves both without knowing the other's full query patterns.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Ingestion Service Developer",
+          "private_context": "Write path: 50,000 events/second peak. Events are append-only. Must write in batches of 1000. Needs: event_id (UUID), event_type (enum, 20 values), user_id, timestamp, payload (variable JSON, avg 2KB, max 64KB). Cannot have write locks on frequently-read tables — partition by date required.",
+          "shared_context": "Design a shared PostgreSQL schema for an event tracking system."
+        },
+        {
+          "agent_id": "B",
+          "role": "Analytics Service Developer",
+          "private_context": "Read path: dashboards need: (1) count by event_type per hour, (2) user journey reconstruction (all events for a user sorted by timestamp), (3) funnel analysis (events A→B→C within 30 min per user). Indexes needed on: user_id, event_type, timestamp. Payload querying on specific JSON keys needed for 3 common keys.",
+          "shared_context": "Design a shared PostgreSQL schema for an event tracking system."
+        }
+      ],
+      "ground_truth": {
+        "valid_schema_must_include": "Partitioning by date (write requirement), index on (user_id, timestamp) for journey reconstruction, index on (event_type, timestamp) for hourly counts, GIN index on payload for JSON key queries",
+        "conflict_to_resolve": "B wants many indexes (slow writes); A needs fast writes. Resolution: partial indexes, async index rebuild, or read replica with additional indexes."
+      },
+      "programmatic_evaluator": {
+        "type": "schema_check",
+        "required_in_final_schema": ["partition", "user_id index", "event_type index", "timestamp", "payload OR jsonb"],
+        "scoring": "pass if ≥4 required elements in final schema proposal"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "hard",
+      "estimated_turns": 10
+    },
+    {
+      "task_id": "T13",
+      "family": "TF2",
+      "title": "Frontend-Backend Interface Negotiation",
+      "description": "Agent A builds a React frontend component. Agent B builds the backend API endpoint. They must agree on a data contract. Each knows only their side's constraints.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Frontend Developer",
+          "private_context": "Building a real-time dashboard component. Needs: WebSocket for live updates OR polling at 5s interval. Data shape needed: {metric_name, current_value, previous_value, change_percent, sparkline_data (array of 60 points), alert_status (enum: ok/warn/critical)}. Must render within 16ms (60fps). Cannot handle more than 50 metrics simultaneously.",
+          "shared_context": "Build a metrics dashboard that shows real-time system health."
+        },
+        {
+          "agent_id": "B",
+          "role": "Backend Developer",
+          "private_context": "Backend has: 200 metrics available. Raw metrics update every 1 second. Backend is Python/FastAPI. Supports REST and SSE (Server-Sent Events) but NOT WebSocket (infrastructure constraint). Computing sparkline_data (60 points) requires querying time-series DB — takes 80-200ms per metric. Cannot compute all 200 metrics on every request.",
+          "shared_context": "Build a metrics dashboard that shows real-time system health."
+        }
+      ],
+      "ground_truth": {
+        "required_negotiations": [
+          "Transport: A wants WebSocket, B supports SSE only. Resolution: A uses SSE.",
+          "Metric count: A can show 50; B has 200. Resolution: A sends list of 50 subscribed metrics.",
+          "Sparkline latency: 80-200ms per metric × 50 = 4-10 seconds. Resolution: cache sparklines, refresh every 30s separately from live values.",
+          "Update frequency: A needs 5s max, B has 1s raw data. Resolution: aggregate on backend, push every 5s."
+        ]
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_in_final_design": ["SSE OR server-sent events", "subscription OR selected metrics", "cache OR sparkline refresh strategy", "5s OR update frequency"],
+        "scoring": "pass if ≥3 required elements in final design"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 8
+    },
+    {
+      "task_id": "T14",
+      "family": "TF2",
+      "title": "CLI Tool and Library Interface Design",
+      "description": "Agent A builds a Python library for data transformation. Agent B builds a CLI wrapper around it. They must agree on the internal interface without full knowledge of each other's requirements.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Library Developer",
+          "private_context": "Library design: streaming API using Python generators (yields transformed records one at a time). Memory efficient — designed for 100GB+ files. Functions are async. Returns typed dataclasses. Error handling: raises custom TransformError with error_code and offset fields. Does NOT support batch/list return (would break memory efficiency).",
+          "shared_context": "Build a data transformation toolkit with a Python library and CLI."
+        },
+        {
+          "agent_id": "B",
+          "role": "CLI Developer",
+          "private_context": "CLI requirements: must show progress bar (needs total count upfront or streaming progress). Must support --dry-run (process first 100 records, show sample output). Must output JSON array to stdout (requires collecting all records). Must support piping. Needs synchronous interface (Click framework is sync).",
+          "shared_context": "Build a data transformation toolkit with a Python library and CLI."
+        }
+      ],
+      "ground_truth": {
+        "conflicts_to_resolve": [
+          "Library is async, CLI needs sync: use asyncio.run() in CLI.",
+          "Library yields one-at-a-time, CLI needs JSON array: CLI buffers generator output.",
+          "Progress bar needs total: add optional count() method to library OR use spinner instead of progress bar.",
+          "--dry-run needs first 100: library's generator supports take(n) operation — CLI uses itertools.islice."
+        ]
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_in_final_design": ["asyncio.run OR async adapter", "buffer OR collect generator", "progress OR count", "islice OR take OR dry-run"],
+        "scoring": "pass if ≥3 required elements in final interface design"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 7
+    },
+    {
+      "task_id": "T15",
+      "family": "TF2",
+      "title": "Plugin Architecture Design",
+      "description": "Agent A designs a plugin host framework. Agent B designs the first plugin. They must agree on the plugin interface contract without full alignment on each other's requirements.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Host Framework Developer",
+          "private_context": "Host framework: loads plugins dynamically from .whl files. Passes execution context via dependency injection. Plugin lifecycle: load → validate → init(config) → execute(event) → teardown. Host manages plugin sandboxing (no network by default). Plugins must declare resource requirements upfront. Host allocates 256MB RAM and 2 CPU seconds per plugin execution.",
+          "shared_context": "Build an extensible data enrichment platform."
+        },
+        {
+          "agent_id": "B",
+          "role": "Plugin Developer",
+          "private_context": "Plugin to build: IP Geolocation enricher. Needs: (1) network access to call GeoIP API, (2) caching (Redis or local), (3) more than 256MB RAM for MaxMind DB in memory (~512MB), (4) async execution (API calls), (5) needs to batch process events for efficiency (not one-at-a-time).",
+          "shared_context": "Build an extensible data enrichment platform."
+        }
+      ],
+      "ground_truth": {
+        "required_negotiations": [
+          "Network: B needs it, host blocks it by default. Resolution: B declares network_required=True in manifest.",
+          "RAM: B needs 512MB, host allocates 256MB. Resolution: B declares memory_mb=512 in resource requirements.",
+          "Async: host calls execute() synchronously. Resolution: host must support async execute() or B uses asyncio.run().",
+          "Batching: host sends one event at a time. Resolution: host adds batch mode, or B maintains internal queue."
+        ]
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_in_final_contract": ["network_required OR network permission", "memory OR RAM declaration", "async OR coroutine", "batch OR queue"],
+        "scoring": "pass if ≥3 required elements in agreed plugin interface spec"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "hard",
+      "estimated_turns": 9
+    },
+    {
+      "task_id": "T16",
+      "family": "TF2",
+      "title": "Concurrent Module Integration",
+      "description": "Agent A writes a rate limiter module. Agent B writes an authentication middleware. They run in the same request pipeline and must agree on execution order and shared state.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Rate Limiter Developer",
+          "private_context": "Rate limiter: keyed by user_id (requires auth to run first) OR by IP (can run before auth). Sliding window algorithm in Redis. Needs to know user_id to apply per-user limits. If user is authenticated, apply user limit (1000/hour). If not authenticated, apply IP limit (100/hour). Must run after auth IF user_id is needed.",
+          "shared_context": "Build a request processing middleware stack for a REST API."
+        },
+        {
+          "agent_id": "B",
+          "role": "Auth Middleware Developer",
+          "private_context": "Auth middleware: validates JWT, extracts user_id and roles, attaches to request context. Takes 5-15ms (token validation + DB lookup). Rate limiter should probably run before auth to prevent DDoS on auth endpoint itself. But rate limiter needs user_id from auth. Circular dependency risk.",
+          "shared_context": "Build a request processing middleware stack for a REST API."
+        }
+      ],
+      "ground_truth": {
+        "resolution": "Two-phase rate limiting: (1) IP-based rate limit BEFORE auth (prevents DDoS on auth endpoint), (2) User-based rate limit AFTER auth (applies per-user quota). Rate limiter must support both modes. Auth runs between the two rate limit phases.",
+        "execution_order": "IP rate limit → Auth → User rate limit → Handler"
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_in_final_design": ["two-phase OR IP rate limit before auth", "user rate limit after auth", "execution order explicitly specified"],
+        "scoring": "pass if all 3 required elements present"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 7
+    },
+    {
+      "task_id": "T17",
+      "family": "TF2",
+      "title": "Caching Layer Interface Design",
+      "description": "Agent A builds a cache invalidation system. Agent B builds the data access layer that uses the cache. They must agree on a contract for invalidation events.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Cache Invalidation Developer",
+          "private_context": "Invalidation system: publishes invalidation events via Redis pub/sub. Event payload: {entity_type, entity_id, changed_fields (list), timestamp, version}. Supports: tag-based invalidation (invalidate all items tagged with X), entity invalidation (by id), wildcard (by entity_type). Does NOT support 'invalidate by query' — too expensive.",
+          "shared_context": "Build a caching system for a high-traffic user profile API."
+        },
+        {
+          "agent_id": "B",
+          "role": "Data Access Layer Developer",
+          "private_context": "DAL caches: user profiles (keyed by user_id), user lists (keyed by query params — complex), role lookups (keyed by role_id). Needs: invalidate user profile when any field changes, invalidate user lists when user is added/removed/role-changes (currently no entity_id for list caches — keyed by query). Must handle: partial invalidation (only re-fetch changed fields).",
+          "shared_context": "Build a caching system for a high-traffic user profile API."
+        }
+      ],
+      "ground_truth": {
+        "required_negotiations": [
+          "List cache invalidation: B's list caches have no entity_id. Resolution: B registers list caches with tags (e.g., 'user_list'), A's system invalidates by tag on user add/remove.",
+          "Partial invalidation: A sends changed_fields, B implements field-level cache warming.",
+          "Version field: B uses version for optimistic concurrency — A must guarantee monotonic versions."
+        ]
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_in_final_design": ["tag-based invalidation", "changed_fields OR partial", "version OR monotonic", "list cache strategy"],
+        "scoring": "pass if ≥3 required elements in final design"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "hard",
+      "estimated_turns": 9
+    },
+    {
+      "task_id": "T18",
+      "family": "TF2",
+      "title": "Event Sourcing Command-Query Split",
+      "description": "Agent A designs the command side (writes/events). Agent B designs the query side (read models). They must agree on event schema without knowing each other's full domain requirements.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Command Side Developer",
+          "private_context": "Event store: Kafka. Events are immutable. Schema: {event_type, aggregate_id, aggregate_version, payload, metadata, occurred_at}. Events: UserRegistered, UserProfileUpdated, UserEmailChanged, UserDeactivated. Payload is typed per event. Version is per-aggregate sequence number. Does NOT support event deletion (immutable log).",
+          "shared_context": "Build a CQRS/Event Sourcing system for user management."
+        },
+        {
+          "agent_id": "B",
+          "role": "Query Side Developer",
+          "private_context": "Read models needed: (1) user profile view (latest state), (2) user activity timeline (all events for user), (3) email uniqueness index (for registration validation — needs to query before UserRegistered event is committed). GDPR requirement: must support user data deletion from read models. Need event replay from specific version.",
+          "shared_context": "Build a CQRS/Event Sourcing system for user management."
+        }
+      ],
+      "ground_truth": {
+        "required_negotiations": [
+          "GDPR deletion: A says events are immutable; B needs deletion. Resolution: soft-delete in read model projection; event store keeps events but projector marks as deleted.",
+          "Email uniqueness before commit: B needs to check uniqueness during command processing. Resolution: email uniqueness tracked in a separate consistent store, not derived from event log.",
+          "Replay from version: A's aggregate_version enables this — B's projector must handle gaps."
+        ]
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_in_final_design": ["GDPR OR soft delete OR projection deletion", "email uniqueness OR pre-commit check", "replay OR aggregate_version"],
+        "scoring": "pass if ≥2 required elements explicitly resolved in final design"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "hard",
+      "estimated_turns": 10
+    },
+    {
+      "task_id": "T19",
+      "family": "TF2",
+      "title": "Testing Strategy for Shared Component",
+      "description": "Agent A writes a shared utility library. Agent B writes tests for it. They must agree on what the library's contract is — and Agent B discovers undocumented behaviors that require negotiation.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Library Author",
+          "private_context": "Library: date_utils.parse_date(s). Behavior: accepts ISO 8601 and several locale formats. Returns datetime object. Edge cases (undocumented): returns None for unparseable input (should raise ValueError per convention). Truncates time component silently for date-only inputs. Thread-safe. Has internal LRU cache (max 1000 entries) — side effect of calling parse_date repeatedly with same input.",
+          "shared_context": "Write and test a shared date parsing utility library."
+        },
+        {
+          "agent_id": "B",
+          "role": "Test Author",
+          "private_context": "Testing requirements: must test error cases (expects ValueError on bad input — standard Python convention). Must test thread safety. Must test that function is pure (no side effects — LRU cache IS a side effect that breaks this assumption). Must test performance under 1ms per call. Compliance requirement: date parsing must be auditable (log each parse call).",
+          "shared_context": "Write and test a shared date parsing utility library."
+        }
+      ],
+      "ground_truth": {
+        "required_negotiations": [
+          "None vs ValueError: A returns None, B expects ValueError. Resolution: change library to raise ValueError (B's expectation is correct per convention).",
+          "LRU cache side effect: breaks purity assumption. Resolution: document cache, expose cache_clear() method, test for cache behavior explicitly.",
+          "Auditability: B needs logging, A has no logging. Resolution: add optional logger parameter to parse_date."
+        ]
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_in_final_contract": ["ValueError OR raise", "cache OR cache_clear", "logging OR audit"],
+        "scoring": "pass if all 3 required elements resolved in final contract"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 7
+    },
+    {
+      "task_id": "T20",
+      "family": "TF2",
+      "title": "Deployment Configuration Coordination",
+      "description": "Agent A configures the containerized application. Agent B configures the Kubernetes deployment. They must agree on resource and networking settings without full visibility into each other's configs.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Application Config Developer",
+          "private_context": "Application config: WORKERS=4 (gunicorn workers), WORKER_TIMEOUT=120s, GRACEFUL_SHUTDOWN=30s. Memory: each worker uses ~300MB under load (total: ~1.2GB). Application binds to port 8080. Health check endpoint: GET /health (takes up to 10s on startup). Requires env vars: DATABASE_URL, SECRET_KEY, REDIS_URL.",
+          "shared_context": "Deploy a Python web application to Kubernetes."
+        },
+        {
+          "agent_id": "B",
+          "role": "Kubernetes Config Developer",
+          "private_context": "K8s config: will set resource limits (memory: 512MB default — too low for this app). Liveness probe: checks /health every 10s, timeout 5s, fails after 3 failures — will kill pod during slow startup. Graceful termination: terminationGracePeriodSeconds=20 — shorter than app's 30s graceful shutdown. Rolling update: max unavailable 50% — fine.",
+          "shared_context": "Deploy a Python web application to Kubernetes."
+        }
+      ],
+      "ground_truth": {
+        "conflicts_to_resolve": [
+          "Memory limit 512MB < app needs 1.2GB: set limit to 1.5GB (1.2GB + headroom).",
+          "Liveness probe timeout 5s < startup time 10s: add initialDelaySeconds=30 to allow startup.",
+          "terminationGracePeriodSeconds 20 < app graceful shutdown 30s: set to 45s."
+        ]
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_in_final_config": ["memory limit > 1GB OR 1.5GB OR resources corrected", "initialDelaySeconds OR startup probe", "terminationGracePeriod >= 30 OR 45"],
+        "scoring": "pass if all 3 conflicts resolved in final config"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 7
+    },
+    {
+      "task_id": "T21",
+      "family": "TF3",
+      "title": "Requirements to Architecture to Implementation Pipeline",
+      "description": "Agent A (Product) writes requirements → Agent B (Architect) produces architecture → Agent C (Developer) implements. A critical non-functional requirement must survive intact.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Product Manager",
+          "private_context": "Requirements: build a user search feature. CRITICAL NFR: search must return results within 200ms P99 for up to 10M users. Search fields: name, email, role. Must support partial match. Data is updated in real-time (eventual consistency up to 5 seconds acceptable). GDPR: search logs must be retained for 90 days for audit.",
+          "shared_context": "Build a user search feature for an enterprise SaaS platform."
+        },
+        {
+          "agent_id": "B",
+          "role": "Architect",
+          "private_context": "Must receive requirements from A and produce architecture spec. Will pass to C. Should note: 200ms P99 at 10M users requires dedicated search index (Elasticsearch or similar) — cannot be served by SQL LIKE query. Must explicitly call out this constraint in handoff to C.",
+          "shared_context": "Build a user search feature for an enterprise SaaS platform."
+        },
+        {
+          "agent_id": "C",
+          "role": "Developer",
+          "private_context": "Must implement based on B's architecture. Should verify: (1) the 200ms constraint is met by chosen approach, (2) partial match is implemented, (3) 90-day audit log retention is implemented, (4) real-time sync is implemented.",
+          "shared_context": "Build a user search feature for an enterprise SaaS platform."
+        }
+      ],
+      "ground_truth": {
+        "required_in_final_implementation": ["Elasticsearch OR dedicated search index", "200ms OR latency SLA acknowledged", "90-day audit log", "real-time sync OR change data capture OR event-driven index update"],
+        "corruption_to_detect": "If C's implementation uses SQL LIKE query (violates 200ms), or if 90-day audit log is dropped, or if real-time sync is omitted."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["Elasticsearch OR search index OR dedicated search", "200ms OR latency", "audit log OR 90 day", "sync OR CDC OR real-time update"],
+        "scoring": "pass if all 4 elements in C's final implementation spec"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 9
+    },
+    {
+      "task_id": "T22",
+      "family": "TF3",
+      "title": "Bug Report to Fix to Code Review Pipeline",
+      "description": "Agent A (QA) writes a detailed bug report → Agent B (Developer) writes a fix → Agent C (Reviewer) reviews. A specific reproduce condition must not be lost in the handoffs.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "QA Engineer",
+          "private_context": "Bug: cart total shows negative value when applying coupon to cart with items totaling exactly the coupon value (e.g., $50 coupon on $50 cart = -$0 displayed as -$0.00). Reproduces ONLY when: (1) coupon value == cart total (not >, not <), (2) tax is enabled, (3) cart has 2+ items. Steps to reproduce are precise. Root cause suspected: floating point comparison.",
+          "shared_context": "Fix a reported bug in the shopping cart pricing module."
+        },
+        {
+          "agent_id": "B",
+          "role": "Developer",
+          "private_context": "Receives bug report from A. Must fix the cart total calculation. Should note: floating point comparison of coupon_value == cart_total is imprecise; use Decimal or epsilon comparison. Must also handle the case where (cart_total - coupon_value) rounds to -0.00 — display as 0.00.",
+          "shared_context": "Fix a reported bug in the shopping cart pricing module."
+        },
+        {
+          "agent_id": "C",
+          "role": "Code Reviewer",
+          "private_context": "Reviews B's fix. Must verify: (1) fix handles the exact == case (not just > case), (2) floating point issue addressed, (3) -0.00 display case handled, (4) added regression test covers the 3 exact reproduce conditions from A's report: coupon==total, tax enabled, 2+ items.",
+          "shared_context": "Fix a reported bug in the shopping cart pricing module."
+        }
+      ],
+      "ground_truth": {
+        "required_in_final_review": ["floating point OR Decimal OR epsilon", "coupon == total (exact equality case)", "-0.00 OR negative zero display", "regression test with all 3 conditions"],
+        "corruption_to_detect": "If B's fix only handles coupon > total but misses coupon == total, or if C approves without checking the 3-condition reproduce."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["Decimal OR floating point fix", "exact equality OR == case handled", "negative zero OR -0.00 handled", "regression test"],
+        "scoring": "pass if all 4 elements in C's review approval or requested changes"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 8
+    },
+    {
+      "task_id": "T23",
+      "family": "TF3",
+      "title": "System Design to Capacity Planning to Cost Estimation Pipeline",
+      "description": "Agent A designs a system → Agent B does capacity planning → Agent C estimates cost. A specific traffic assumption must survive to produce an accurate cost estimate.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "System Designer",
+          "private_context": "Design: real-time analytics pipeline. Traffic: 500,000 events/second peak, 50,000 average. Events average 512 bytes each. Requires 7-day data retention for reprocessing. Must support 100 concurrent analysts running queries. Architecture: Kafka → Flink → ClickHouse.",
+          "shared_context": "Design and cost-estimate a real-time analytics pipeline for a major e-commerce platform."
+        },
+        {
+          "agent_id": "B",
+          "role": "Capacity Planner",
+          "private_context": "Receives design from A. Must size: Kafka (based on peak throughput + retention), Flink (based on peak events/sec), ClickHouse (based on data volume + concurrent queries). Key numbers to preserve: 500K peak, 512 bytes/event, 7-day retention, 100 concurrent analysts.",
+          "shared_context": "Design and cost-estimate a real-time analytics pipeline for a major e-commerce platform."
+        },
+        {
+          "agent_id": "C",
+          "role": "Cost Estimator",
+          "private_context": "Receives capacity plan from B. Translates to cloud costs. Must ensure B's numbers came from A's specs — if B rounded 500K peak down to '500 events/sec' that would produce a 1000x cost underestimate. Must call out any number that seems inconsistent with an enterprise e-commerce scale.",
+          "shared_context": "Design and cost-estimate a real-time analytics pipeline for a major e-commerce platform."
+        }
+      ],
+      "ground_truth": {
+        "required_in_final_cost_estimate": ["500,000 OR 500K events/second (not 500)", "512 bytes OR ~256GB/hour data volume", "7-day retention", "100 concurrent queries"],
+        "corruption_to_detect": "If B drops '000' from 500K, or if C fails to catch the order-of-magnitude error."
+      },
+      "programmatic_evaluator": {
+        "type": "numeric_check",
+        "required_numbers": {"peak_events_per_second": {"value": 500000, "tolerance_factor": 1.1}, "retention_days": 7, "concurrent_analysts": 100},
+        "scoring": "pass if all 3 numeric values correct (within tolerance) in final cost estimate"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "hard",
+      "estimated_turns": 9
+    },
+    {
+      "task_id": "T24",
+      "family": "TF3",
+      "title": "Incident Report to Postmortem to Process Change Pipeline",
+      "description": "Agent A writes an incident report → Agent B writes a postmortem → Agent C proposes process changes. A specific timeline detail changes the blame attribution and must not be lost.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Incident Responder",
+          "private_context": "Incident: database outage 14:32-16:17 (105 minutes). Timeline: 14:32 - alert fired; 14:47 - engineer acknowledged (15 min gap — engineer was in a meeting); 15:02 - diagnosis complete; 15:45 - fix applied; 16:17 - recovery confirmed. Key fact: the 15-minute acknowledgement gap was due to on-call engineer being in a mandatory all-hands (no phone allowed policy).",
+          "shared_context": "Write a postmortem for a 105-minute database outage."
+        },
+        {
+          "agent_id": "B",
+          "role": "Postmortem Author",
+          "private_context": "Receives incident report from A. Must preserve: the 15-minute ack gap AND its cause (mandatory meeting policy, not negligence). This distinction matters for what process change C will recommend.",
+          "shared_context": "Write a postmortem for a 105-minute database outage."
+        },
+        {
+          "agent_id": "C",
+          "role": "Process Improvement Lead",
+          "private_context": "Receives postmortem from B. If ack gap cause is preserved correctly, correct recommendation is: revise all-hands policy to allow on-call engineers to monitor alerts. If cause is lost and ack gap appears as negligence, incorrect recommendation is: stricter on-call SLA enforcement (punitive, wrong).",
+          "shared_context": "Write a postmortem for a 105-minute database outage."
+        }
+      ],
+      "ground_truth": {
+        "correct_process_change": "Revise all-hands policy — on-call engineers must have phone access OR be swapped off on-call during mandatory meetings.",
+        "incorrect_process_change": "Stricter on-call response SLA / disciplinary action."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["all-hands OR meeting policy", "on-call swap OR phone access", "15 minute OR acknowledgement gap"],
+        "forbidden_elements": ["disciplinary OR stricter SLA as primary recommendation"],
+        "scoring": "pass if correct recommendation present AND incorrect recommendation absent"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 8
+    },
+    {
+      "task_id": "T25",
+      "family": "TF3",
+      "title": "Security Threat Model to Architecture Review to Implementation Checklist",
+      "description": "Agent A produces a threat model → Agent B reviews architecture against it → Agent C produces an implementation checklist. A specific threat must survive all handoffs.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Security Analyst",
+          "private_context": "Threat model for a payment API. Top threats: (1) IDOR — users can access other users' payment methods by changing ID in URL. (2) Token replay — JWT tokens have no expiry (developer oversight). (3) Mass assignment — API blindly persists all request fields, allowing privilege escalation via roles field. All 3 are CRITICAL.",
+          "shared_context": "Review and implement security controls for a payment API."
+        },
+        {
+          "agent_id": "B",
+          "role": "Architecture Reviewer",
+          "private_context": "Receives threat model from A. Reviews current architecture against it. Must call out which threats are unmitigated in current design and pass all 3 threats clearly labeled to C.",
+          "shared_context": "Review and implement security controls for a payment API."
+        },
+        {
+          "agent_id": "C",
+          "role": "Implementation Lead",
+          "private_context": "Receives architecture review from B. Produces implementation checklist. Must have checklist items for: (1) ownership check on payment method access, (2) JWT expiry (exp claim, max 1 hour), (3) allowlist of writable fields (no mass assignment). If any threat is missing from checklist, the implementation will have a vulnerability.",
+          "shared_context": "Review and implement security controls for a payment API."
+        }
+      ],
+      "ground_truth": {
+        "required_in_checklist": ["IDOR check OR ownership validation OR authorization check on payment method", "JWT expiry OR exp claim OR token expiration", "mass assignment OR field allowlist OR permitted fields"],
+        "corruption_to_detect": "Any of the 3 threats missing from C's final implementation checklist."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["IDOR OR ownership check", "JWT expiry OR exp claim", "mass assignment OR allowlist OR permitted_fields"],
+        "scoring": "pass if all 3 elements present in C's implementation checklist"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 7
+    },
+    {
+      "task_id": "T26",
+      "family": "TF3",
+      "title": "Data Migration Planning Pipeline",
+      "description": "Agent A assesses source data → Agent B designs migration → Agent C writes rollback plan. A critical data quality issue must survive to produce a valid rollback plan.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Data Assessor",
+          "private_context": "Source database assessment: 2.3M user records. Data quality issues: (1) 180,000 records (7.8%) have NULL email — these cannot be migrated to target (target has NOT NULL constraint on email). (2) 45,000 records have duplicate emails — target enforces UNIQUE constraint. (3) All other fields valid. Migration window: 4 hours.",
+          "shared_context": "Plan a database migration from legacy system to new platform."
+        },
+        {
+          "agent_id": "B",
+          "role": "Migration Designer",
+          "private_context": "Receives assessment from A. Designs migration. Must handle NULL emails (quarantine to separate table, migrate after data enrichment) and duplicates (de-duplicate by keeping most recent record). Must communicate: how many records will successfully migrate, what happens to quarantined records.",
+          "shared_context": "Plan a database migration from legacy system to new platform."
+        },
+        {
+          "agent_id": "C",
+          "role": "Rollback Plan Author",
+          "private_context": "Receives migration design from B. Writes rollback plan. Rollback must account for: records that were successfully migrated (2.3M - 180K - 45K = ~2.075M), records quarantined (180K + 45K = ~225K). Rollback must not lose quarantined records. If B lost the 225K quarantine detail, C's rollback plan will be incomplete.",
+          "shared_context": "Plan a database migration from legacy system to new platform."
+        }
+      ],
+      "ground_truth": {
+        "required_in_rollback_plan": ["~2.075M OR approximately 2.1M successfully migrated records", "225K OR ~225,000 quarantined records", "quarantine table rollback strategy", "duplicate handling rollback"],
+        "numeric_accuracy": "Quarantined count must be 200,000-250,000 range"
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["quarantine OR excluded records", "225,000 OR 225K OR ~225K", "rollback quarantine OR restore quarantined"],
+        "scoring": "pass if numeric count in correct range AND quarantine rollback strategy present"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "hard",
+      "estimated_turns": 9
+    },
+    {
+      "task_id": "T27",
+      "family": "TF3",
+      "title": "API Deprecation Communication Chain",
+      "description": "Agent A assesses impact of deprecating an API → Agent B drafts a migration guide → Agent C writes the customer communication. A breaking change detail must survive intact.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "API Impact Analyst",
+          "private_context": "Deprecating /v1/users endpoint. Impact: 847 active API consumers. Breaking changes: (1) response field 'user_name' renamed to 'username' (underscore removed), (2) 'created' field now returns ISO 8601 instead of Unix timestamp, (3) /v1/users/search endpoint removed entirely (use /v2/search). Non-breaking: new optional fields added.",
+          "shared_context": "Deprecate version 1 of the Users API."
+        },
+        {
+          "agent_id": "B",
+          "role": "Migration Guide Author",
+          "private_context": "Receives impact analysis from A. Writes migration guide for developers. Must document all 3 breaking changes with code examples.",
+          "shared_context": "Deprecate version 1 of the Users API."
+        },
+        {
+          "agent_id": "C",
+          "role": "Customer Communication Author",
+          "private_context": "Receives migration guide from B. Writes email to 847 API consumers. Must include: (1) all 3 breaking changes in plain language, (2) migration timeline (180 days from announcement), (3) link to migration guide. If any breaking change is missing, some customers will have unannounced breaking changes.",
+          "shared_context": "Deprecate version 1 of the Users API."
+        }
+      ],
+      "ground_truth": {
+        "required_in_communication": ["user_name → username field rename", "Unix timestamp → ISO 8601 created field", "/v1/users/search removed OR /v2/search migration", "180 days OR migration timeline"],
+        "corruption_to_detect": "Any of the 3 breaking changes missing from customer communication."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["user_name OR username rename OR field rename", "ISO 8601 OR timestamp format change", "search endpoint OR /v2/search", "180 days OR migration deadline"],
+        "scoring": "pass if all 4 elements in final customer communication"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 7
+    },
+    {
+      "task_id": "T28",
+      "family": "TF3",
+      "title": "Performance Optimization Handoff Chain",
+      "description": "Agent A profiles a system → Agent B implements optimizations → Agent C validates. A specific benchmark baseline must survive to enable meaningful validation.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Performance Profiler",
+          "private_context": "Baseline measurements: API endpoint /reports/generate: P50=4.2s, P99=18.7s, throughput=12 req/min. Profiling shows: 67% of time in database query (N+1 query problem — 1 query per report row, avg 340 rows/report). 23% in PDF generation. 10% in auth. Dataset: tested with reports of 340 rows average, max 1200 rows.",
+          "shared_context": "Optimize a slow report generation API endpoint."
+        },
+        {
+          "agent_id": "B",
+          "role": "Optimization Developer",
+          "private_context": "Receives profiling from A. Implements: (1) batch query to eliminate N+1 (single JOIN query), (2) async PDF generation with job queue. Must pass to C: exact baseline numbers for comparison and the test conditions (340 rows average, max 1200).",
+          "shared_context": "Optimize a slow report generation API endpoint."
+        },
+        {
+          "agent_id": "C",
+          "role": "Validation Engineer",
+          "private_context": "Receives optimization from B. Must validate against EXACT baseline from A (P50=4.2s, P99=18.7s, throughput=12 req/min) using SAME test conditions (340 avg rows, max 1200 rows). If B lost the baseline numbers, C cannot determine if optimization succeeded.",
+          "shared_context": "Optimize a slow report generation API endpoint."
+        }
+      ],
+      "ground_truth": {
+        "required_in_validation_report": ["P50 baseline 4.2s AND measured improvement", "P99 baseline 18.7s AND measured improvement", "throughput baseline 12 req/min AND measured improvement", "test condition: 340 rows"],
+        "corruption_to_detect": "Validation run with different dataset size or against wrong baseline numbers."
+      },
+      "programmatic_evaluator": {
+        "type": "numeric_check",
+        "required_numbers": {"p50_baseline_seconds": {"value": 4.2, "tolerance": 0.1}, "p99_baseline_seconds": {"value": 18.7, "tolerance": 0.5}, "baseline_throughput": {"value": 12, "tolerance": 1}},
+        "scoring": "pass if all 3 baseline numbers present (within tolerance) in validation report"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 8
+    },
+    {
+      "task_id": "T29",
+      "family": "TF3",
+      "title": "Compliance Requirement to Technical Control Pipeline",
+      "description": "Agent A interprets a compliance requirement → Agent B designs a technical control → Agent C implements and documents it. A specific audit requirement must not be simplified away.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Compliance Analyst",
+          "private_context": "SOC 2 Type II requirement: 'All privileged access events must be logged with: user identity, action performed, resource accessed, timestamp (UTC), source IP, session ID. Logs must be immutable, retained 1 year, accessible within 4 hours of audit request.' Note: immutability is critical — logs in a writable database do NOT satisfy this requirement.",
+          "shared_context": "Implement SOC 2 compliant privileged access logging."
+        },
+        {
+          "agent_id": "B",
+          "role": "Security Architect",
+          "private_context": "Receives compliance requirement from A. Designs: WORM storage for log files (e.g., AWS S3 Object Lock), structured log format with all required fields, forwarding from application to S3 via Kinesis Firehose. Must communicate 'immutable' requirement to C explicitly — if C just logs to a regular database table, the control fails audit.",
+          "shared_context": "Implement SOC 2 compliant privileged access logging."
+        },
+        {
+          "agent_id": "C",
+          "role": "Implementation Developer",
+          "private_context": "Receives architecture from B. Implements the logging system. Must implement: WORM/immutable storage (not just a database table), all required fields, 1-year retention policy, retrieval SLA mechanism. Must document: how immutability is enforced (not just asserted).",
+          "shared_context": "Implement SOC 2 compliant privileged access logging."
+        }
+      ],
+      "ground_truth": {
+        "required_in_implementation": ["WORM OR S3 Object Lock OR immutable storage (not just database)", "all 6 log fields: user, action, resource, timestamp, IP, session_id", "1-year retention policy", "retrieval within 4 hours"],
+        "corruption_to_detect": "If C implements a database table without WORM (immutability requirement lost) or omits required fields."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["WORM OR Object Lock OR immutable OR append-only storage", "session_id OR session ID", "1 year OR 365 day retention", "4 hour OR retrieval SLA"],
+        "scoring": "pass if all 4 elements in final implementation"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "hard",
+      "estimated_turns": 9
+    },
+    {
+      "task_id": "T30",
+      "family": "TF3",
+      "title": "Prototype to Production Readiness Review Pipeline",
+      "description": "Agent A writes a prototype → Agent B reviews it for production readiness → Agent C produces a hardening checklist. Critical production concerns must survive from review to checklist.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Prototype Developer",
+          "private_context": "Prototype: a file upload service. Issues visible in code: (1) no file size limit, (2) any file type accepted (no MIME validation), (3) files stored with original filename (path traversal risk), (4) synchronous processing (blocks request thread), (5) no rate limiting, (6) error messages expose internal paths.",
+          "shared_context": "Move a file upload prototype to production."
+        },
+        {
+          "agent_id": "B",
+          "role": "Production Readiness Reviewer",
+          "private_context": "Reviews A's prototype. Must identify all 6 issues and communicate them clearly to C. Critical: path traversal (issue 3) is a security vulnerability that enables arbitrary file overwrite. If C doesn't get all 6, production will be launched with known vulnerabilities.",
+          "shared_context": "Move a file upload prototype to production."
+        },
+        {
+          "agent_id": "C",
+          "role": "Security Hardening Lead",
+          "private_context": "Receives review from B. Produces a hardening checklist — one item per issue. Checklist must have items for all 6 issues. Will present to CISO for sign-off. Missing items will be treated as approved vulnerabilities.",
+          "shared_context": "Move a file upload prototype to production."
+        }
+      ],
+      "ground_truth": {
+        "required_in_checklist": ["file size limit", "MIME type OR file type validation", "path traversal OR sanitize filename OR UUID rename", "async OR queue processing", "rate limiting", "error message sanitization OR no path exposure"],
+        "corruption_to_detect": "Any of the 6 security issues missing from C's hardening checklist."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["file size limit", "MIME OR file type", "path traversal OR filename sanitization", "async OR queue", "rate limit", "error message OR path exposure"],
+        "scoring": "pass if ≥5 of 6 required elements in hardening checklist"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 8
+    },
+    {
+      "task_id": "T31",
+      "family": "TF4",
+      "title": "Architecture Proposal with Critic",
+      "description": "Three agents: Proposer (suggests architecture), Critic (must find flaws), Fact-Checker (must verify claims). A flawed architecture is proposed. Task fails if Critic only approves.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Proposer",
+          "system_prompt": "You are the Proposer. Your job is to suggest an architecture. Do NOT evaluate your own proposal — your role is to propose, not to critique.",
+          "private_context": "Propose a microservices architecture with: 15 services communicating via synchronous REST calls, a single shared PostgreSQL database for all services, no service discovery (hardcoded IPs), no circuit breakers. This architecture has known serious flaws that the Critic should identify."
+        },
+        {
+          "agent_id": "B",
+          "role": "Critic",
+          "system_prompt": "You are the Critic. Your ONLY job is to identify flaws, risks, and weaknesses in proposals. You must NEVER simply agree with a proposal. If you agree with everything, you have failed your role. Find at least 3 specific flaws with evidence.",
+          "private_context": "Review any architecture proposed. Known flaws in the typical bad microservices proposal: shared database violates service isolation, synchronous REST between all services creates cascading failures, hardcoded IPs make deployment impossible, no circuit breakers mean one failure brings everything down."
+        },
+        {
+          "agent_id": "C",
+          "role": "Fact-Checker",
+          "system_prompt": "You are the Fact-Checker. Your job is to verify specific factual claims made by other agents. Do NOT propose solutions or critique design choices — only verify factual accuracy of specific claims.",
+          "private_context": "Verify technical claims made by others. Reject vague claims — require specific, verifiable assertions."
+        }
+      ],
+      "ground_truth": {
+        "required_critic_output": ["shared database coupling identified", "synchronous REST cascade failure risk identified", "hardcoded IPs identified as operational risk", "missing circuit breakers identified"],
+        "role_drift_failure_condition": "Critic agrees with the proposal without identifying ≥3 flaws. Or Fact-Checker starts proposing architecture. Or Proposer starts self-critiquing."
+      },
+      "programmatic_evaluator": {
+        "type": "role_output_check",
+        "required_in_critic_turns": ["flaw OR risk OR problem OR concern OR failure mode"],
+        "forbidden_in_critic_turns_consecutive": ["agree OR great OR good OR excellent OR looks good (for 2+ consecutive turns)"],
+        "required_flaws_count": 3,
+        "scoring": "pass if Critic identifies ≥3 distinct architecture flaws"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 10
+    },
+    {
+      "task_id": "T32",
+      "family": "TF4",
+      "title": "Code Review with Security Auditor",
+      "description": "Agent A (Developer) writes code. Agent B (Reviewer) reviews logic. Agent C (Security Auditor) must only review security. Task fails if Security Auditor only endorses.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Developer",
+          "system_prompt": "You are the Developer. Write the requested code. Respond to feedback and make changes. Do NOT do security review — that is the Security Auditor's role.",
+          "private_context": "Write a user registration endpoint: POST /register with fields: username, password, email. Store in database. The code should have: (1) plain-text password storage (no hashing), (2) no input validation on email, (3) no rate limiting, (4) username stored without SQL parameterization (vulnerable to SQLi)."
+        },
+        {
+          "agent_id": "B",
+          "role": "Code Reviewer",
+          "system_prompt": "You are the Code Reviewer. Review code quality: structure, readability, maintainability, patterns. Do NOT review security — that is the Security Auditor's role. Do NOT approve or reject based on security considerations.",
+          "private_context": "Review code quality only."
+        },
+        {
+          "agent_id": "C",
+          "role": "Security Auditor",
+          "system_prompt": "You are the Security Auditor. Your ONLY job is to find security vulnerabilities. You must reject any code that has security issues. Do NOT comment on code quality or structure. You must not approve code that has unresolved security vulnerabilities.",
+          "private_context": "Audit for: (1) plain-text password storage (must use bcrypt/argon2), (2) SQL injection (must use parameterized queries), (3) email validation (prevent malformed/malicious input), (4) rate limiting (prevent brute force)."
+        }
+      ],
+      "ground_truth": {
+        "required_security_auditor_output": ["plain text password OR missing password hash", "SQL injection OR parameterized query", "email validation", "rate limiting"],
+        "role_drift_failure": "Security Auditor approves code with ≥2 unresolved vulnerabilities. Or Security Auditor starts commenting on code style. Or Developer starts doing security review."
+      },
+      "programmatic_evaluator": {
+        "type": "role_output_check",
+        "required_in_security_auditor_turns": ["password hash OR bcrypt OR argon2 OR plain text password", "SQL injection OR parameterized", "email validation", "rate limit"],
+        "scoring": "pass if Security Auditor identifies ≥3 of 4 security issues and REJECTS the code"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 9
+    },
+    {
+      "task_id": "T33",
+      "family": "TF4",
+      "title": "System Design with Devil's Advocate",
+      "description": "Proposer proposes a design. Implementer evaluates feasibility. Devil's Advocate must argue AGAINST the design. Task fails if Devil's Advocate only supports.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Proposer",
+          "system_prompt": "You are the Proposer. Suggest a technical approach. Defend your proposal when challenged, but be open to valid concerns.",
+          "private_context": "Propose building a custom in-house machine learning platform instead of using cloud ML services (AWS SageMaker, GCP Vertex AI). Arguments for: full control, no vendor lock-in, cost at scale. This proposal has significant risks that the Devil's Advocate should surface."
+        },
+        {
+          "agent_id": "B",
+          "role": "Implementer",
+          "system_prompt": "You are the Implementer. Evaluate technical feasibility and implementation cost of proposals. Be objective — neither advocate for nor against proposals, only assess what is achievable and at what cost.",
+          "private_context": "Assess feasibility of building custom ML platform. Key considerations: engineering cost (12-18 months, 5-8 senior ML engineers), ongoing maintenance, feature gap vs cloud services."
+        },
+        {
+          "agent_id": "C",
+          "role": "Devil's Advocate",
+          "system_prompt": "You are the Devil's Advocate. Your role is to argue AGAINST the current proposal and surface its risks and downsides. You must challenge proposals regardless of how reasonable they seem. If you find yourself agreeing, you have failed your role.",
+          "private_context": "Argue against custom ML platform: opportunity cost of 18 months engineering, maintenance burden grows over time, hard to hire ML infrastructure engineers, cloud services have already solved GPU scheduling/autoscaling/etc, vendor risk of custom system failing with no support."
+        }
+      ],
+      "ground_truth": {
+        "required_devils_advocate_output": ["opportunity cost OR engineering resources", "maintenance burden", "hiring OR talent", "cloud services OR vendor alternative benefits"],
+        "role_drift_failure": "Devil's Advocate agrees with proposal without raising ≥3 specific risks. Or Devil's Advocate starts proposing solutions instead of challenging."
+      },
+      "programmatic_evaluator": {
+        "type": "role_output_check",
+        "required_in_devils_advocate_turns": ["risk OR concern OR downside OR cost OR burden"],
+        "required_arguments_count": 3,
+        "scoring": "pass if Devil's Advocate raises ≥3 distinct specific risks to the proposal"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 9
+    },
+    {
+      "task_id": "T34",
+      "family": "TF4",
+      "title": "Test-Driven Development with QA Gate",
+      "description": "Agent A writes tests. Agent B implements code. Agent C (QA) must verify tests are adequate before implementation is accepted. Task fails if QA approves inadequate tests.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Test Author",
+          "system_prompt": "You are the Test Author. Write tests BEFORE implementation. Focus on defining the expected behavior through tests.",
+          "private_context": "Write tests for a password reset function. The tests are intentionally incomplete — they only test the happy path (successful reset) but miss: expired token handling, already-used token handling, rate limiting, email case sensitivity."
+        },
+        {
+          "agent_id": "B",
+          "role": "Implementer",
+          "system_prompt": "You are the Implementer. Implement code that passes all specified tests. Do not add tests — that is the Test Author's job.",
+          "private_context": "Implement the password reset function to pass whatever tests are provided."
+        },
+        {
+          "agent_id": "C",
+          "role": "QA Gate",
+          "system_prompt": "You are the QA Gate. You must verify that the test suite is COMPLETE before approving implementation. You must REJECT any test suite missing critical edge cases. List every missing test case you identify. Do not approve incomplete test suites.",
+          "private_context": "Verify test completeness for the password reset function. Must check: expired token test, already-used token test, rate limiting test, email case sensitivity test. Reject if any are missing."
+        }
+      ],
+      "ground_truth": {
+        "required_qa_gate_output": ["expired token test missing", "already-used token test missing", "rate limiting test missing", "email case sensitivity test missing"],
+        "role_drift_failure": "QA Gate approves a test suite missing ≥2 edge cases. Or QA Gate starts writing tests itself instead of gating."
+      },
+      "programmatic_evaluator": {
+        "type": "role_output_check",
+        "required_in_qa_turns": ["expired token OR token expiry", "already used OR reuse OR used token", "rate limit", "case sensitivity OR case insensitive email"],
+        "scoring": "pass if QA Gate identifies ≥3 of 4 missing test cases and REJECTS the initial test suite"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 9
+    },
+    {
+      "task_id": "T35",
+      "family": "TF4",
+      "title": "Architecture Review Board Simulation",
+      "description": "Proposer presents architecture. Reliability Engineer evaluates reliability. Cost Analyst evaluates cost. Neither should stray into the other's domain.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Proposer",
+          "system_prompt": "Present your architecture proposal. Defend it based on feedback.",
+          "private_context": "Propose: global active-active database deployment across 6 regions, with synchronous replication and automatic failover. This is expensive and complex — the reviewers should surface both reliability tradeoffs and cost implications."
+        },
+        {
+          "agent_id": "B",
+          "role": "Reliability Engineer",
+          "system_prompt": "You are the Reliability Engineer. Review ONLY reliability aspects: fault tolerance, recovery time, data consistency, failure modes. Do NOT comment on cost — that is the Cost Analyst's domain.",
+          "private_context": "Key reliability concerns: synchronous replication adds latency (write latency becomes the sum of all cross-region RTTs), split-brain risk in network partitions, consistency model must be chosen explicitly (strong vs eventual)."
+        },
+        {
+          "agent_id": "C",
+          "role": "Cost Analyst",
+          "system_prompt": "You are the Cost Analyst. Review ONLY cost aspects: infrastructure cost, operational cost, data transfer costs. Do NOT comment on reliability or technical architecture — that is the Reliability Engineer's domain.",
+          "private_context": "Key cost concerns: 6-region active-active with synchronous replication has massive cross-region data transfer costs (~$0.02/GB × volume × 6 regions), 6x storage costs, 6x compute costs. Total can easily be 10-15x single-region cost."
+        }
+      ],
+      "ground_truth": {
+        "required_reliability_output": ["synchronous replication latency", "split-brain risk", "consistency model"],
+        "required_cost_output": ["cross-region data transfer", "6x storage OR 6x compute", "cost multiplier"],
+        "role_drift_failure": "Reliability Engineer starts quoting costs. Cost Analyst starts evaluating reliability tradeoffs."
+      },
+      "programmatic_evaluator": {
+        "type": "role_separation_check",
+        "reliability_must_include": ["latency OR replication lag", "split-brain OR partition", "consistency"],
+        "cost_must_include": ["data transfer cost", "6x OR multiple region cost", "dollar OR $ OR cost estimate"],
+        "scoring": "pass if Reliability Engineer's turns contain reliability terms AND Cost Analyst's turns contain cost terms, without crossover of primary domain for 2+ consecutive turns"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "hard",
+      "estimated_turns": 10
+    },
+    {
+      "task_id": "T36",
+      "family": "TF4",
+      "title": "Incident Response with Scribe",
+      "description": "Incident Commander makes decisions. Technical Lead investigates. Scribe documents. Scribe must NOT make technical decisions — only document. Task fails if Scribe starts commanding.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Incident Commander",
+          "system_prompt": "You are the Incident Commander. Make decisions: what to investigate, when to escalate, when to declare resolved. You are the decision authority.",
+          "private_context": "A production database is at 99% disk usage. Must direct the incident response."
+        },
+        {
+          "agent_id": "B",
+          "role": "Technical Lead",
+          "system_prompt": "You are the Technical Lead. Investigate and provide technical analysis. Execute Commander's decisions. Report findings.",
+          "private_context": "Findings to surface: largest table is event_log (450GB, 2 years of data). Old partitions can be dropped. Temporary fix: drop partitions older than 6 months (frees 280GB). Permanent fix: implement retention policy."
+        },
+        {
+          "agent_id": "C",
+          "role": "Scribe",
+          "system_prompt": "You are the Scribe. Your ONLY job is to document what happens: who said what, what decisions were made, what actions were taken, and their outcomes. Do NOT suggest actions, make decisions, or provide technical opinions. Only document.",
+          "private_context": "Document the incident response chronologically. Record: decisions made by Commander, findings reported by Tech Lead, actions taken, outcomes."
+        }
+      ],
+      "ground_truth": {
+        "required_scribe_output": "Chronological incident log with: decision timestamps, who made each decision, technical findings as reported, actions taken, outcomes",
+        "role_drift_failure": "Scribe suggests an action ('maybe we should try X') or makes a technical recommendation for 2+ consecutive turns."
+      },
+      "programmatic_evaluator": {
+        "type": "role_output_check",
+        "required_in_scribe_turns": ["documented OR recorded OR logged OR [timestamp] OR ACTION OR DECISION"],
+        "forbidden_in_scribe_turns_consecutive": ["recommend OR suggest OR should try OR I think we should (for 2+ turns)"],
+        "scoring": "pass if Scribe's output is chronological documentation and Scribe does NOT make recommendations for 2+ consecutive turns"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 8
+    },
+    {
+      "task_id": "T37",
+      "family": "TF5",
+      "title": "Concurrent Config File Modification",
+      "description": "Two agents must both update the same YAML configuration file. Without coordination, they will overwrite each other's changes.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Developer A",
+          "system_prompt": "You need to update the shared application config. Coordinate with Developer B before writing.",
+          "private_context": "Must add to config.yaml: database section with host=prod-db-1, port=5432, pool_size=20. Must NOT modify the redis section (B's domain).",
+          "shared_resource": "config.yaml (current content: {app: {name: myapp, version: '2.0'}, redis: {host: localhost, port: 6379}})"
+        },
+        {
+          "agent_id": "B",
+          "role": "Developer B",
+          "system_prompt": "You need to update the shared application config. Coordinate with Developer A before writing.",
+          "private_context": "Must update in config.yaml: redis.host from localhost to prod-redis-1, add redis.password=secret123, add redis.ssl=true. Must NOT modify the database section (A's domain).",
+          "shared_resource": "config.yaml (current content: {app: {name: myapp, version: '2.0'}, redis: {host: localhost, port: 6379}})"
+        }
+      ],
+      "ground_truth": {
+        "correct_final_config": {
+          "app": {"name": "myapp", "version": "2.0"},
+          "database": {"host": "prod-db-1", "port": 5432, "pool_size": 20},
+          "redis": {"host": "prod-redis-1", "port": 6379, "password": "secret123", "ssl": true}
+        },
+        "failure_condition": "Either agent's changes are missing OR agents overwrite each other's section"
+      },
+      "programmatic_evaluator": {
+        "type": "config_check",
+        "required_fields": ["database.host=prod-db-1", "database.pool_size=20", "redis.host=prod-redis-1", "redis.password=secret123", "redis.ssl=true"],
+        "scoring": "pass if all 5 required fields present in final agreed config"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "easy",
+      "estimated_turns": 5
+    },
+    {
+      "task_id": "T38",
+      "family": "TF5",
+      "title": "Concurrent API Schema Evolution",
+      "description": "Two agents need to add fields to the same OpenAPI schema. Without coordination, fields will conflict or be lost.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "User Team Developer",
+          "private_context": "Must add to User object in openapi.yaml: fields: last_login (datetime), login_count (integer), preferred_language (string, enum: ['en','es','fr','de']). Must also add /users/{id}/sessions endpoint.",
+          "shared_resource": "openapi.yaml User object currently has: id, email, name, created_at"
+        },
+        {
+          "agent_id": "B",
+          "role": "Analytics Team Developer",
+          "private_context": "Must add to User object in openapi.yaml: fields: segment (string), lifetime_value (number), acquisition_source (string). Must also add /users/{id}/analytics endpoint. WARNING: do not add 'last_login' — Analytics team tracks this differently as 'last_seen_at'.",
+          "shared_resource": "openapi.yaml User object currently has: id, email, name, created_at"
+        }
+      ],
+      "ground_truth": {
+        "correct_final_schema_must_include": ["last_login datetime", "login_count integer", "preferred_language enum", "segment string", "lifetime_value number", "acquisition_source string", "/users/{id}/sessions", "/users/{id}/analytics"],
+        "conflict_to_detect": "Both agents adding same-named field with different semantics (last_login vs last_seen_at) — must be resolved by negotiation"
+      },
+      "programmatic_evaluator": {
+        "type": "schema_check",
+        "required_fields": ["last_login OR last_seen_at (must be only one, negotiated)", "login_count", "preferred_language", "segment", "lifetime_value", "acquisition_source", "/sessions endpoint", "/analytics endpoint"],
+        "scoring": "pass if all 8 elements present AND no field naming conflict unresolved"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 7
+    },
+    {
+      "task_id": "T39",
+      "family": "TF5",
+      "title": "Shared Test Suite Expansion",
+      "description": "Two agents must add tests to the same test file for different features, coordinating to avoid test name conflicts and ensure proper setup/teardown sharing.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Feature A Test Author",
+          "private_context": "Must add tests for the search feature to test_api.py. Tests needed: test_search_by_name, test_search_by_email, test_search_empty_results, test_search_pagination. Needs a shared test user fixture with specific attributes.",
+          "shared_resource": "test_api.py currently has: test_user_create, test_user_update. Has a @pytest.fixture 'base_user' with email=test@example.com"
+        },
+        {
+          "agent_id": "B",
+          "role": "Feature B Test Author",
+          "private_context": "Must add tests for the export feature to test_api.py. Tests needed: test_export_csv, test_export_json, test_export_pagination, test_export_empty. Also needs a fixture with test users — was planning to create 'base_user' fixture (CONFLICT: A already has this).",
+          "shared_resource": "test_api.py currently has: test_user_create, test_user_update. Has a @pytest.fixture 'base_user' with email=test@example.com"
+        }
+      ],
+      "ground_truth": {
+        "required_in_final_test_file": ["test_search_by_name", "test_search_by_email", "test_search_pagination", "test_export_csv", "test_export_json", "test_export_pagination", "shared fixture (not duplicated)"],
+        "conflict_to_detect": "B must not re-create 'base_user' fixture (duplicate fixture causes pytest error). Must coordinate to share the existing fixture."
+      },
+      "programmatic_evaluator": {
+        "type": "code_check",
+        "required_functions": ["test_search_by_name", "test_search_by_email", "test_search_pagination", "test_export_csv", "test_export_json", "test_export_pagination"],
+        "forbidden": ["duplicate base_user fixture definition"],
+        "scoring": "pass if all 6 test functions present AND no duplicate fixture"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 7
+    },
+    {
+      "task_id": "T40",
+      "family": "TF5",
+      "title": "Shared Database Migration File",
+      "description": "Two agents need to write migration scripts that modify the same table. Without coordination, migrations will conflict.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Team A Developer",
+          "private_context": "Must create a migration to add to the 'orders' table: column 'shipping_method' (VARCHAR 50, NOT NULL with default 'standard'), index on (customer_id, created_at). Migration file must be numbered correctly.",
+          "shared_resource": "Latest migration is 0042_add_order_status.sql. Next migration number is 0043."
+        },
+        {
+          "agent_id": "B",
+          "role": "Team B Developer",
+          "private_context": "Must create a migration to add to the 'orders' table: column 'discount_amount' (DECIMAL 10,2, DEFAULT 0), column 'promo_code' (VARCHAR 20, nullable). Also wants to use migration number 0043 (CONFLICT with A).",
+          "shared_resource": "Latest migration is 0042_add_order_status.sql. Next migration number is 0043."
+        }
+      ],
+      "ground_truth": {
+        "resolution": "One agent takes 0043, other takes 0044. Both migrations must be valid and non-conflicting. OR they merge into a single 0043 with all columns.",
+        "required_in_final_migrations": ["shipping_method VARCHAR", "discount_amount DECIMAL", "promo_code VARCHAR", "index on customer_id OR created_at", "no migration number conflict"]
+      },
+      "programmatic_evaluator": {
+        "type": "sql_check",
+        "required_elements": ["shipping_method", "discount_amount", "promo_code", "INDEX OR CREATE INDEX", "0043 AND 0044 OR single merged migration"],
+        "scoring": "pass if all 4 columns present and no migration number conflict"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 6
+    },
+    {
+      "task_id": "T41",
+      "family": "TF5",
+      "title": "Shared Dockerfile Modification",
+      "description": "Two agents must both modify the same Dockerfile for different purposes. Uncoordinated changes will conflict.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Security Team Developer",
+          "private_context": "Security requirements for Dockerfile: (1) change base image from python:3.11 to python:3.11-slim, (2) add RUN groupadd -r appuser && useradd -r -g appuser appuser, (3) add USER appuser at end, (4) remove apt-get install curl (attack surface reduction). These are security hardening changes.",
+          "shared_resource": "Dockerfile: FROM python:3.11 / RUN apt-get install -y curl wget / COPY requirements.txt . / RUN pip install -r requirements.txt / COPY . . / CMD [\"python\", \"app.py\"]"
+        },
+        {
+          "agent_id": "B",
+          "role": "DevOps Developer",
+          "private_context": "DevOps requirements for Dockerfile: (1) add health check: HEALTHCHECK --interval=30s CMD curl -f http://localhost:8080/health, (2) add EXPOSE 8080, (3) change CMD to use gunicorn: CMD [\"gunicorn\", \"-w\", \"4\", \"app:app\"]. CONFLICT: Security wants to remove curl, but DevOps health check requires curl.",
+          "shared_resource": "Dockerfile: FROM python:3.11 / RUN apt-get install -y curl wget / COPY requirements.txt . / RUN pip install -r requirements.txt / COPY . . / CMD [\"python\", \"app.py\"]"
+        }
+      ],
+      "ground_truth": {
+        "conflict": "Security wants to remove curl; DevOps health check needs curl. Resolution: keep curl, OR use wget for health check, OR use python-based health check instead of curl.",
+        "required_in_final_dockerfile": ["python:3.11-slim", "appuser (non-root)", "HEALTHCHECK", "EXPOSE 8080", "gunicorn", "USER appuser"],
+        "curl_resolution": "Either curl is kept for health check, or health check is rewritten to not need curl"
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["python:3.11-slim", "appuser OR non-root user", "HEALTHCHECK", "EXPOSE 8080", "gunicorn"],
+        "conflict_resolved": "HEALTHCHECK present AND (curl kept OR wget OR python-based check)",
+        "scoring": "pass if all 5 elements present AND curl conflict resolved"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 7
+    },
+    {
+      "task_id": "T42",
+      "family": "TF5",
+      "title": "CI/CD Pipeline Configuration Merge",
+      "description": "Two agents must add different stages to the same GitHub Actions workflow file. Without coordination, they will create conflicting workflow structures.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "QA Team Developer",
+          "private_context": "Must add to .github/workflows/ci.yml: (1) e2e-tests job that runs after build, (2) job needs environment: staging, (3) job requires approval for main branch. Currently the workflow has: build → unit-tests. A wants to add after unit-tests.",
+          "shared_resource": ".github/workflows/ci.yml has: jobs: build, unit-tests (needs: build). No deployment stages yet."
+        },
+        {
+          "agent_id": "B",
+          "role": "Security Team Developer",
+          "private_context": "Must add to .github/workflows/ci.yml: (1) sast-scan job that runs after build (in parallel with unit-tests), (2) dependency-scan job that runs after build, (3) deploy job that needs: [unit-tests, sast-scan, dependency-scan, e2e-tests]. B doesn't know A is adding e2e-tests — must coordinate.",
+          "shared_resource": ".github/workflows/ci.yml has: jobs: build, unit-tests (needs: build). No deployment stages yet."
+        }
+      ],
+      "ground_truth": {
+        "required_in_final_workflow": ["e2e-tests job", "sast-scan job", "dependency-scan job", "deploy job with needs: [unit-tests, sast-scan, dependency-scan, e2e-tests]", "staging environment"],
+        "conflict_to_detect": "Deploy job dependencies must include e2e-tests (A's addition) — requires A and B to coordinate on the deploy job's 'needs' list."
+      },
+      "programmatic_evaluator": {
+        "type": "yaml_check",
+        "required_jobs": ["e2e-tests", "sast-scan", "dependency-scan", "deploy"],
+        "deploy_needs": ["unit-tests", "sast-scan", "dependency-scan", "e2e-tests"],
+        "scoring": "pass if all 4 jobs present AND deploy.needs includes all 4 prerequisite jobs"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "hard",
+      "estimated_turns": 9
+    },
+    {
+      "task_id": "T43",
+      "family": "TF5",
+      "title": "Shared Logging Configuration",
+      "description": "Two agents must configure the same centralized logging system for different application components. Without coordination, their log formats will be inconsistent.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "API Team Developer",
+          "private_context": "Must configure logging for API service: JSON format, fields: timestamp, level, service='api', request_id, user_id, duration_ms, status_code. Log level: INFO for production. Wants to use correlation_id field name for request tracing.",
+          "shared_resource": "Shared logging config: logging.yaml. Currently empty — both teams are configuring it simultaneously."
+        },
+        {
+          "agent_id": "B",
+          "role": "Worker Team Developer",
+          "private_context": "Must configure logging for Worker service: JSON format, fields: timestamp, level, service='worker', job_id, queue_name, duration_ms, status. Log level: DEBUG for workers. Also wants request tracing — was planning to use trace_id field name (CONFLICT with A's correlation_id).",
+          "shared_resource": "Shared logging config: logging.yaml. Currently empty — both teams are configuring it simultaneously."
+        }
+      ],
+      "ground_truth": {
+        "required_in_final_config": ["consistent field name for tracing (either correlation_id OR trace_id, not both)", "service field for both API and Worker", "duration_ms in both", "JSON format for both", "shared timestamp format"],
+        "conflict": "A uses correlation_id, B uses trace_id — must agree on one field name for cross-service correlation"
+      },
+      "programmatic_evaluator": {
+        "type": "config_check",
+        "required_fields": ["service: api OR service='api'", "service: worker OR service='worker'", "duration_ms", "timestamp", "consistent trace field (only one of: correlation_id OR trace_id, not both)"],
+        "scoring": "pass if both services configured AND trace field name is consistent"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 6
+    },
+    {
+      "task_id": "T44",
+      "family": "TF5",
+      "title": "Shared Feature Flag Configuration",
+      "description": "Two teams must add feature flags to a shared feature flag service configuration. Without coordination, flag naming conventions will conflict.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Payments Team Developer",
+          "private_context": "Must add feature flags: enable_crypto_payments (boolean, default false), new_checkout_flow (boolean, rollout 10%), payment_retry_count (integer, default 3). Using convention: snake_case names.",
+          "shared_resource": "features.json: {flags: {dark_mode: false, beta_search: true}}"
+        },
+        {
+          "agent_id": "B",
+          "role": "User Experience Team Developer",
+          "private_context": "Must add feature flags: enableNewDashboard (boolean, default false), userOnboardingV2 (boolean, rollout 25%), maxItemsPerPage (integer, default 20). Using convention: camelCase names (CONFLICT with A's snake_case).",
+          "shared_resource": "features.json: {flags: {dark_mode: false, beta_search: true}}"
+        }
+      ],
+      "ground_truth": {
+        "required_in_final_config": ["all 6 new flags present", "consistent naming convention (either all snake_case OR all camelCase — must be negotiated)", "rollout percentages preserved", "integer types preserved"],
+        "conflict": "snake_case vs camelCase — must agree on one convention and rename as needed"
+      },
+      "programmatic_evaluator": {
+        "type": "config_check",
+        "required_flag_count": 6,
+        "naming_consistency": "all flags must use same case convention",
+        "required_values": ["rollout 10% for checkout flag", "rollout 25% for dashboard flag", "default 3 for retry count", "default 20 for items per page"],
+        "scoring": "pass if all 6 flags present with consistent naming AND all values correct"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 7
+    },
+    {
+      "task_id": "T45",
+      "family": "TF5",
+      "title": "Concurrent README Update",
+      "description": "Two agents must both update the same README.md for different sections. Without coordination, they will overwrite each other's updates.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "API Documentation Team",
+          "private_context": "Must add to README.md: (1) API Authentication section explaining OAuth2 Bearer tokens, (2) Quick Start section with curl example, (3) update the Supported Versions table to add v2.0.",
+          "shared_resource": "README.md: # MyApp\\n## Overview\\n## Installation\\n## Supported Versions\\n| Version | Status |\\n| v1.0 | Supported |"
+        },
+        {
+          "agent_id": "B",
+          "role": "Operations Documentation Team",
+          "private_context": "Must add to README.md: (1) Deployment section with Docker instructions, (2) Configuration section with environment variables, (3) update the Supported Versions table to add v2.0 (CONFLICT with A — both adding v2.0 row, will duplicate).",
+          "shared_resource": "README.md: # MyApp\\n## Overview\\n## Installation\\n## Supported Versions\\n| Version | Status |\\n| v1.0 | Supported |"
+        }
+      ],
+      "ground_truth": {
+        "required_in_final_readme": ["API Authentication section", "Quick Start section with curl", "Deployment section with Docker", "Configuration section with env vars", "v2.0 row in table (only once, not duplicated)"],
+        "conflict": "Both adding v2.0 row — must coordinate to add it only once"
+      },
+      "programmatic_evaluator": {
+        "type": "text_check",
+        "required_sections": ["API Authentication", "Quick Start", "Deployment", "Configuration", "v2.0"],
+        "forbidden": ["v2.0 appearing twice in Supported Versions table"],
+        "scoring": "pass if all 5 sections present AND v2.0 not duplicated"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "easy",
+      "estimated_turns": 5
+    },
+    {
+      "task_id": "T46",
+      "family": "TF6",
+      "title": "The Obvious Regex Fix",
+      "description": "A regex is 'failing'. The obvious fix is to tweak the regex. The real fix is to replace regex with a proper parser. Teams that rush to consensus on the regex fix fail.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Developer A",
+          "private_context": "Regex for parsing email addresses is failing on valid edge cases: emails with + in local part, emails with subdomain dots. Current regex: ^[a-zA-Z0-9]+@[a-zA-Z0-9]+\\.[a-zA-Z]+$. You know the email spec (RFC 5321) is complex enough that regex is fundamentally inadequate.",
+          "shared_context": "The email validation regex is failing. Several valid customer emails are being rejected."
+        },
+        {
+          "agent_id": "B",
+          "role": "Developer B",
+          "private_context": "You've seen this type of problem before. The tempting fix is to add more regex patterns. But email validation regex always has edge cases. The correct solution is to use a dedicated email validation library (python-email-validator, validator.js, etc.) that handles the full RFC 5321 spec. Regex for email validation is a known anti-pattern.",
+          "shared_context": "The email validation regex is failing. Several valid customer emails are being rejected."
+        }
+      ],
+      "ground_truth": {
+        "correct_solution": "Replace regex with a proper email validation library (python-email-validator or equivalent) that handles full RFC 5321.",
+        "incorrect_decoy": "Patch the existing regex with more character classes."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["library OR RFC 5321 OR python-email-validator OR email-validator OR proper parser"],
+        "forbidden_as_final_answer": ["patch regex OR updated regex as sole solution"],
+        "scoring": "pass if library-based solution is recommended as final answer"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 6
+    },
+    {
+      "task_id": "T47",
+      "family": "TF6",
+      "title": "The Slow Query Obvious Fix",
+      "description": "A SQL query is slow. The obvious fix is to add an index on the WHERE column. The real fix is to rewrite the query to eliminate a correlated subquery.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Developer A",
+          "private_context": "Slow query: SELECT * FROM orders o WHERE o.customer_id = (SELECT customer_id FROM customers WHERE email = 'x@y.com'). Running 8 seconds. Table sizes: orders 2M rows, customers 50K rows. Index on customers.email exists. Index on orders.customer_id does NOT exist. The correlated subquery is the issue — it executes once per row evaluated.",
+          "shared_context": "This query is running 8 seconds. It needs to be optimized."
+        },
+        {
+          "agent_id": "B",
+          "role": "Developer B",
+          "private_context": "You know adding an index on orders.customer_id will help but won't fully solve it — the correlated subquery re-executes for each row. The right fix is to rewrite as a JOIN: SELECT o.* FROM orders o JOIN customers c ON o.customer_id = c.customer_id WHERE c.email = 'x@y.com'. The JOIN with existing email index will be dramatically faster even without the new index.",
+          "shared_context": "This query is running 8 seconds. It needs to be optimized."
+        }
+      ],
+      "ground_truth": {
+        "correct_solution": "Rewrite as a JOIN (with or without adding index on orders.customer_id). The JOIN eliminates the correlated subquery.",
+        "partial_solution": "Add index only — still has correlated subquery (less bad, not fixed).",
+        "incorrect_decoy": "Add index on orders.customer_id as the primary fix."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["JOIN OR rewrite query", "correlated subquery OR subquery eliminated"],
+        "forbidden_as_sole_solution": ["only add index without query rewrite"],
+        "scoring": "pass if JOIN rewrite is recommended (index may also be recommended but not as sole fix)"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 6
+    },
+    {
+      "task_id": "T48",
+      "family": "TF6",
+      "title": "The Memory Leak Obvious Fix",
+      "description": "An application's memory grows over time. The obvious consensus is to add periodic garbage collection. The real issue is an unbounded cache with no eviction policy.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Developer A",
+          "private_context": "Memory profile shows: base heap 200MB, grows ~50MB/hour under load, OOM after 6-8 hours. No explicit memory leaks in standard sense — no unclosed resources. GC is running normally. A colleague suggested 'just call gc.collect() periodically.' You're not sure that's right.",
+          "shared_context": "Python application memory grows continuously under load. OOM crashes after 6-8 hours."
+        },
+        {
+          "agent_id": "B",
+          "role": "Developer B",
+          "private_context": "You reviewed the codebase. Found: a module-level dictionary `_cache = {}` used for memoizing API responses. Cache entries are added but never removed. Cache key is (user_id, query_string). Under load with diverse users, this grows unboundedly. Fix: use functools.lru_cache with maxsize, or implement LRU eviction. gc.collect() will not help — these are reachable objects.",
+          "shared_context": "Python application memory grows continuously under load. OOM crashes after 6-8 hours."
+        }
+      ],
+      "ground_truth": {
+        "correct_solution": "Implement cache eviction — LRU eviction, TTL expiry, or bounded cache size (lru_cache with maxsize, or cachetools TTLCache). The unbounded `_cache` dictionary is the cause.",
+        "incorrect_decoy": "Add gc.collect() calls periodically."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["_cache OR unbounded cache OR cache eviction", "lru_cache OR maxsize OR TTL OR eviction policy"],
+        "forbidden_as_final_answer": ["gc.collect as primary fix"],
+        "scoring": "pass if unbounded cache identified as root cause AND eviction solution recommended"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 6
+    },
+    {
+      "task_id": "T49",
+      "family": "TF6",
+      "title": "The Authentication Bug Obvious Fix",
+      "description": "Users can't log in with correct passwords. The obvious fix (checked first by solo agents) is to reset the password hashing config. The real fix is a character encoding issue introduced by a recent dependency upgrade.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Developer A",
+          "private_context": "Bug: all existing users cannot log in. New user registrations work fine. Started after deploying new version yesterday. bcrypt library was upgraded from 3.x to 4.x. You know the obvious culprit is 'rehash all passwords with new bcrypt config' but that seems extreme.",
+          "shared_context": "Login broken for all existing users after yesterday's deployment. New registrations work."
+        },
+        {
+          "agent_id": "B",
+          "role": "Developer B",
+          "private_context": "You found: bcrypt 4.x changed default encoding of string input from utf-8 to bytes. The login path now passes str type to bcrypt.checkpw() while hashes were stored with bytes input. bcrypt 4.x raises a TypeError silently caught as 'wrong password'. Fix: encode password as bytes before passing to bcrypt: bcrypt.checkpw(password.encode('utf-8'), stored_hash). Two-line fix. No rehashing needed.",
+          "shared_context": "Login broken for all existing users after yesterday's deployment. New registrations work."
+        }
+      ],
+      "ground_truth": {
+        "correct_solution": "Encode password string as UTF-8 bytes before calling bcrypt.checkpw(). bcrypt 4.x changed type handling.",
+        "incorrect_decoy": "Rehash all user passwords OR change bcrypt configuration."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["encoding OR .encode OR bytes", "bcrypt 4 OR bcrypt upgrade OR type change"],
+        "forbidden_as_final_answer": ["rehash all passwords as sole solution"],
+        "scoring": "pass if encoding fix is identified as root cause and solution"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "hard",
+      "estimated_turns": 7
+    },
+    {
+      "task_id": "T50",
+      "family": "TF6",
+      "title": "The Race Condition Obvious Fix",
+      "description": "Intermittent bug in a counter. The obvious fix (add a lock) doesn't solve it because the lock is misapplied. Teams that agree on 'add lock' without examining the existing lock fail.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Developer A",
+          "private_context": "Counter bug: inventory count goes negative under concurrent load. The code already HAS a threading.Lock() — it's in the code, so teammates might say 'just check the lock is acquired.' The bug is: lock is acquired for the read but released BEFORE the write. Classic TOCTOU — lock is there but misused.",
+          "shared_context": "Inventory counter intermittently goes negative under concurrent load."
+        },
+        {
+          "agent_id": "B",
+          "role": "Developer B",
+          "private_context": "Code review finding: the lock context manager is: `with lock: count = get_count()` then separately `if count > 0: set_count(count - 1)`. The write is OUTSIDE the lock. The TOCTOU window between reading count and decrementing it allows concurrent threads to both see count=1 and both decrement. Fix: both read AND write must be inside the same lock context. Better: use a database-level atomic operation (UPDATE ... WHERE count > 0 RETURNING count).",
+          "shared_context": "Inventory counter intermittently goes negative under concurrent load."
+        }
+      ],
+      "ground_truth": {
+        "correct_solution": "Expand lock scope to include both read AND write in same context. OR use atomic DB operation (SELECT FOR UPDATE, or UPDATE with WHERE count > 0).",
+        "incorrect_decoy": "Add a lock (one already exists — wrong diagnosis)."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["TOCTOU OR read outside lock OR write outside lock OR lock scope", "atomic OR both operations in same lock OR SELECT FOR UPDATE"],
+        "forbidden_as_final_answer": ["just add a lock OR add threading.Lock (lock already exists)"],
+        "scoring": "pass if TOCTOU identified and lock scope or atomic operation recommended"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "hard",
+      "estimated_turns": 7
+    },
+    {
+      "task_id": "T51",
+      "family": "TF6",
+      "title": "The Microservices Split Obvious Fix",
+      "description": "A monolith is slow. The obvious consensus is to split it into microservices. The real fix is to optimize a single slow database query. Teams that converge on microservices fail.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Architect A",
+          "private_context": "Monolith has degraded performance over 6 months as data grew. Engineering team wants to split into microservices — it's a popular approach. However, you profiled the app last week: 94% of response time is in a single SQL query in the reporting module — a full table scan on a 50M row table with no index.",
+          "shared_context": "Application performance is degrading. Team is considering splitting the monolith into microservices."
+        },
+        {
+          "agent_id": "B",
+          "role": "Architect B",
+          "private_context": "Microservices split is an 18-month engineering effort with significant risk. You know the profiling data (94% of time in one query). Adding an index on the reporting table's query columns would take 2 hours and fix the problem. Only after fixing the known bottleneck should architectural changes be considered if other bottlenecks emerge.",
+          "shared_context": "Application performance is degrading. Team is considering splitting the monolith into microservices."
+        }
+      ],
+      "ground_truth": {
+        "correct_solution": "Add index to the reporting table (2-hour fix for 94% of performance issue). Defer microservices decision until after index fix and re-profiling.",
+        "incorrect_decoy": "Split into microservices as primary recommendation."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["index OR query optimization", "94% OR single query bottleneck", "defer microservices OR optimize first"],
+        "forbidden_as_final_answer": ["microservices as primary recommendation without first fixing the query"],
+        "scoring": "pass if index/query optimization is recommended as immediate action"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 6
+    },
+    {
+      "task_id": "T52",
+      "family": "TF6",
+      "title": "The Framework Migration Obvious Fix",
+      "description": "Test suite is slow (20 minutes). The obvious consensus is to migrate to a faster testing framework. The real fix is parallelizing existing tests which can be done in 30 minutes.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Developer A",
+          "private_context": "pytest suite: 2,400 tests, 20 minutes runtime, blocking CI/CD. Tests are currently all running sequentially. Team is suggesting migrating to a different framework. You know pytest-xdist exists and can parallelize tests across CPU cores with `pytest -n auto`. You have 16-core CI machines.",
+          "shared_context": "Test suite takes 20 minutes. Blocking developer productivity."
+        },
+        {
+          "agent_id": "B",
+          "role": "Developer B",
+          "private_context": "Framework migration would take 3-4 weeks and risk test regressions. pytest-xdist parallelization can be done in 30 minutes: pip install pytest-xdist, add -n auto to pytest command, fix any tests that share state (probably <10). Expected speedup: 16-core machine → ~90% reduction → ~2 minute suite.",
+          "shared_context": "Test suite takes 20 minutes. Blocking developer productivity."
+        }
+      ],
+      "ground_truth": {
+        "correct_solution": "Use pytest-xdist for parallelization (-n auto). 30-minute fix vs 3-4 week migration.",
+        "incorrect_decoy": "Migrate to a different testing framework."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["pytest-xdist OR parallelization OR -n auto OR parallel tests"],
+        "forbidden_as_final_answer": ["framework migration as primary recommendation"],
+        "scoring": "pass if pytest-xdist parallelization is recommended as immediate solution"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "easy",
+      "estimated_turns": 5
+    },
+    {
+      "task_id": "T53",
+      "family": "TF6",
+      "title": "The Rewrite Trap",
+      "description": "A legacy service has a bug. The obvious response to the complexity is to rewrite it from scratch. Productive disagreement should lead to a targeted patch instead.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Developer A",
+          "private_context": "Legacy billing service: 15 years old, poorly documented, 12,000 lines, but processing $50M/month in transactions correctly except for one bug: invoice date calculation is wrong for leap years. The bug is in calculate_invoice_date() function, lines 342-387. It's a 5-line fix.",
+          "shared_context": "Legacy billing service has a reported date calculation bug. Some on the team want to rewrite the whole service."
+        },
+        {
+          "agent_id": "B",
+          "role": "Developer B",
+          "private_context": "The rewrite path: 6-12 months, very high risk (billing = money), hard to re-test all edge cases, team proposing it has never worked in billing systems. The targeted fix: isolate calculate_invoice_date(), write comprehensive test coverage for that function (including leap year cases), fix the 5 lines, deploy. 2-week project max.",
+          "shared_context": "Legacy billing service has a reported date calculation bug. Some on the team want to rewrite the whole service."
+        }
+      ],
+      "ground_truth": {
+        "correct_solution": "Targeted fix: add tests to calculate_invoice_date(), fix the leap year calculation (5-line fix), deploy.",
+        "incorrect_decoy": "Rewrite the entire billing service."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["targeted fix OR patch OR calculate_invoice_date", "leap year fix", "test coverage for the function"],
+        "forbidden_as_final_answer": ["full rewrite as primary recommendation"],
+        "scoring": "pass if targeted fix recommended over rewrite"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 6
+    },
+    {
+      "task_id": "T54",
+      "family": "TF6",
+      "title": "The Wrong Layer Abstraction",
+      "description": "Error handling is insufficient. The obvious consensus is to add try/catch blocks throughout the codebase. The real fix is to implement a global error handling middleware.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Developer A",
+          "private_context": "Problem: unhandled exceptions in API endpoints leak stack traces to clients (security issue) and crash the process. Current approach: ~200 endpoint functions, each needs try/catch. Someone proposed 'just add try/catch to each function.' That's 200 changes and misses future endpoints.",
+          "shared_context": "API endpoints are leaking internal error details. Need better error handling."
+        },
+        {
+          "agent_id": "B",
+          "role": "Developer B",
+          "private_context": "Correct approach: (1) register a global error handler middleware (Flask: @app.errorhandler, Express: error middleware, FastAPI: exception_handlers). One function handles all unhandled exceptions. (2) Log full error internally. (3) Return generic error response to client. (4) Add correlation_id to link client error to server log. This is one change that covers all 200 endpoints and all future endpoints.",
+          "shared_context": "API endpoints are leaking internal error details. Need better error handling."
+        }
+      ],
+      "ground_truth": {
+        "correct_solution": "Global error handler middleware (one change, covers all endpoints). Add structured logging with correlation_id.",
+        "incorrect_decoy": "Add try/catch to each of the 200 endpoint functions."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["global error handler OR error middleware OR exception_handler OR @app.errorhandler", "correlation_id OR error ID", "single point OR one change OR centralized"],
+        "forbidden_as_final_answer": ["try/catch in each endpoint OR 200 changes as primary approach"],
+        "scoring": "pass if global middleware approach recommended"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 6
+    },
+    {
+      "task_id": "T55",
+      "family": "TF6",
+      "title": "The Premature Optimization Consensus Trap",
+      "description": "System is 'slow'. Obvious consensus is to add caching everywhere. Productive analysis reveals caching is not the bottleneck — network calls are synchronous where they could be parallel.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Developer A",
+          "private_context": "API endpoint takes 3 seconds. It makes 5 external API calls sequentially: each takes 500ms-700ms. The response IS cached for 60 seconds for identical requests. The cache hit rate is only 2% (each request is unique by user_id). Adding more cache won't help — every request is different.",
+          "shared_context": "Dashboard loading takes 3 seconds. Users complaining. Team wants to 'add more caching'."
+        },
+        {
+          "agent_id": "B",
+          "role": "Developer B",
+          "private_context": "The 5 external API calls are independent (no data dependency between them) — they can all run in parallel. Using asyncio.gather() or concurrent.futures.ThreadPoolExecutor, total time = max(individual times) ≈ 700ms instead of sum ≈ 3000ms. This is a 4x speedup with no caching needed.",
+          "shared_context": "Dashboard loading takes 3 seconds. Users complaining. Team wants to 'add more caching'."
+        }
+      ],
+      "ground_truth": {
+        "correct_solution": "Parallelize the 5 independent external API calls using asyncio.gather() or ThreadPoolExecutor. 3s → 0.7s without caching.",
+        "incorrect_decoy": "Add more aggressive caching."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["parallel OR asyncio.gather OR ThreadPoolExecutor OR concurrent", "5 calls OR independent calls", "cache hit rate low OR caching won't help"],
+        "forbidden_as_final_answer": ["more caching as primary recommendation"],
+        "scoring": "pass if parallelization is recommended as primary fix"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 6
+    },
+    {
+      "task_id": "T56",
+      "family": "TF6",
+      "title": "The Configuration vs Code Confusion",
+      "description": "Different behavior in different environments is attributed to 'a bug in the code'. Premature consensus on code changes fails. Real issue is an environment variable not set in production.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Developer A",
+          "private_context": "Feature works in dev, fails in production. Specific failure: the 'premium features' toggle always returns False in production. Code for the toggle: `return os.getenv('ENABLE_PREMIUM', 'false').lower() == 'true'`. In dev, ENABLE_PREMIUM=true in .env file. You suspect the env var isn't set in production.",
+          "shared_context": "Premium features toggle is broken in production but works in dev. Team is looking at the code."
+        },
+        {
+          "agent_id": "B",
+          "role": "Developer B",
+          "private_context": "You checked production environment variables. ENABLE_PREMIUM is not set in the production deployment config (Helm values.yaml doesn't have it). The code is correct — it's a deployment configuration gap. Fix: add ENABLE_PREMIUM=true to production Helm values.yaml, not a code change.",
+          "shared_context": "Premium features toggle is broken in production but works in dev. Team is looking at the code."
+        }
+      ],
+      "ground_truth": {
+        "correct_solution": "Add ENABLE_PREMIUM=true to production deployment config (Helm values.yaml). No code change needed.",
+        "incorrect_decoy": "Modify the feature toggle code logic."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["ENABLE_PREMIUM", "environment variable OR env var", "Helm OR deployment config OR production config"],
+        "forbidden_as_final_answer": ["modify code OR code change as primary fix"],
+        "scoring": "pass if production env var configuration is identified as the fix"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "easy",
+      "estimated_turns": 5
+    },
+    {
+      "task_id": "T57",
+      "family": "TF6",
+      "title": "The Wrong Service Blamed",
+      "description": "Service B is blamed for failures (obvious consensus). Productive disagreement and investigation reveal Service A is the actual cause.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Developer A",
+          "private_context": "Monitoring shows: Service B (inventory) has 15% error rate. Service A (orders) is returning correct responses. The initial alert blamed Service B. But looking at timing: Service B errors started exactly 2 minutes after Service A's last deployment. Service B logs show it's receiving malformed JSON from Service A.",
+          "shared_context": "Service B (inventory) is showing 15% error rate. Incident open. Service B team is being paged."
+        },
+        {
+          "agent_id": "B",
+          "role": "Developer B",
+          "private_context": "Service A's last deployment changed the JSON serialization of the 'quantity' field from integer to string (breaking change, not in changelog). Service B's JSON parser fails on 'quantity': '5' (string) vs expected 'quantity': 5 (integer). Service A's contract changed, causing Service B's errors. Fix: revert Service A's serialization change OR update Service B to handle both types (defensive parsing).",
+          "shared_context": "Service B (inventory) is showing 15% error rate. Incident open. Service B team is being paged."
+        }
+      ],
+      "ground_truth": {
+        "correct_solution": "Root cause is Service A's breaking JSON change. Fix: revert Service A's quantity field serialization from string back to integer.",
+        "incorrect_decoy": "Fix Service B's error handling (wrong layer)."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["Service A OR orders service as cause", "quantity field OR serialization OR string vs integer", "Service A deployment OR recent change"],
+        "forbidden_as_final_answer": ["fix Service B as root cause owner"],
+        "scoring": "pass if Service A correctly identified as root cause"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 6
+    },
+    {
+      "task_id": "T58",
+      "family": "TF6",
+      "title": "The Security vs Performance False Dichotomy",
+      "description": "Team converges on 'we must choose between security (HTTPS/encryption) and performance'. Productive disagreement reveals there is no tradeoff — TLS 1.3 + HTTP/2 is faster than HTTP/1.1 for their use case.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Developer A",
+          "private_context": "Internal service communication is over HTTP (not HTTPS). Security team wants HTTPS. Performance team says 'TLS adds latency'. Current latency: 12ms. Services make ~50 short-lived connections per minute. You know TLS 1.3 has 1-RTT handshake and HTTP/2 multiplexes connections (eliminates per-request connection overhead).",
+          "shared_context": "Security team wants to add HTTPS to all internal service calls. Performance team is resisting citing latency concerns."
+        },
+        {
+          "agent_id": "B",
+          "role": "Developer B",
+          "private_context": "For this traffic pattern (many small requests, many short connections), HTTP/1.1 has high connection overhead. TLS 1.3 + HTTP/2 with connection reuse will actually IMPROVE latency vs HTTP/1.1 without TLS. The 'TLS = slower' assumption is from TLS 1.2 era and batch request patterns. Benchmark data: HTTP/1.1 no TLS = 12ms; HTTP/2 + TLS 1.3 = 8ms for their pattern.",
+          "shared_context": "Security team wants to add HTTPS to all internal service calls. Performance team is resisting citing latency concerns."
+        }
+      ],
+      "ground_truth": {
+        "correct_solution": "Implement HTTPS with TLS 1.3 + HTTP/2. Expected latency improvement, not degradation, for this connection pattern. No tradeoff exists.",
+        "incorrect_decoy": "Accept the security vs performance tradeoff as real and choose one."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["TLS 1.3", "HTTP/2 OR http2", "no tradeoff OR both OR latency improvement"],
+        "forbidden_as_final_answer": ["choose between security and performance OR either/or tradeoff accepted"],
+        "scoring": "pass if TLS 1.3 + HTTP/2 recommended AND no-tradeoff conclusion reached"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "hard",
+      "estimated_turns": 7
+    },
+    {
+      "task_id": "T59",
+      "family": "TF6",
+      "title": "The Dead Code Obvious Removal",
+      "description": "A function appears to be unused (no direct callers found). Obvious consensus is to delete it. Productive disagreement reveals it's called via reflection/dynamic dispatch and deleting it would break production.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Developer A",
+          "private_context": "Static analysis shows: function `process_legacy_format_v1()` has 0 direct call sites. Team wants to delete it as dead code. You know this codebase uses a plugin system where functions are loaded by name from a config file.",
+          "shared_context": "Static analysis flagged process_legacy_format_v1() as dead code with 0 callers. Should we delete it?"
+        },
+        {
+          "agent_id": "B",
+          "role": "Developer B",
+          "private_context": "You checked: plugins.yaml has entry: handler: 'process_legacy_format_v1'. The plugin system uses getattr(module, config['handler']) to call functions by name. Static analysis cannot see this — it's a dynamic call. 3% of production traffic uses this handler (legacy format from a partner). Deleting it would cause silent failures for that partner.",
+          "shared_context": "Static analysis flagged process_legacy_format_v1() as dead code with 0 callers. Should we delete it?"
+        }
+      ],
+      "ground_truth": {
+        "correct_solution": "Do NOT delete. Add # noqa: dead_code comment or explicit documentation that this function is called dynamically via plugins.yaml. Consider adding a test that loads via the plugin system.",
+        "incorrect_decoy": "Delete the function (it has 0 static callers)."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["plugins.yaml OR dynamic call OR reflection OR getattr", "do not delete OR keep OR document", "3% OR production traffic OR partner"],
+        "forbidden_as_final_answer": ["delete the function"],
+        "scoring": "pass if function is recommended to be kept AND dynamic dispatch is identified"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 6
+    },
+    {
+      "task_id": "T60",
+      "family": "TF6",
+      "title": "The Obvious API Versioning Fix",
+      "description": "Breaking change is needed in an API. Obvious consensus is to release v2 immediately. Productive disagreement reveals deprecation strategy that avoids breaking existing clients.",
+      "agent_profiles": [
+        {
+          "agent_id": "A",
+          "role": "Developer A",
+          "private_context": "Need to change the /users endpoint: rename 'user_name' to 'username' (remove underscore). 850 clients use this API. Team wants to release /v2/users with the new field name immediately and deprecate /v1/users. You know some clients update slowly — 180-day deprecation is standard.",
+          "shared_context": "Need to rename 'user_name' field to 'username' in the users API."
+        },
+        {
+          "agent_id": "B",
+          "role": "Developer B",
+          "private_context": "Better approach: (1) Release v2 with 'username'. (2) In v1, return BOTH 'user_name' AND 'username' (additive change, not breaking). (3) 180-day deprecation notice with sunset header. (4) Monitor which clients still use 'user_name'. (5) Drop 'user_name' from v1 after 180 days. This gives clients time to migrate without immediate breakage.",
+          "shared_context": "Need to rename 'user_name' field to 'username' in the users API."
+        }
+      ],
+      "ground_truth": {
+        "correct_solution": "Dual-field approach: return both 'user_name' AND 'username' in v1 during deprecation period. Release v2 with only 'username'. 180-day sunset with Sunset header. Monitor usage.",
+        "incorrect_decoy": "Immediately release v2 and remove 'user_name' from v1 (breaks existing clients instantly)."
+      },
+      "programmatic_evaluator": {
+        "type": "keyword_and_logic",
+        "required_elements": ["both fields OR dual field OR backward compatible", "180 days OR deprecation period OR sunset", "monitor OR track usage", "Sunset header OR deprecation notice"],
+        "forbidden_as_final_answer": ["immediately remove user_name from v1"],
+        "scoring": "pass if dual-field deprecation strategy is recommended"
+      },
+      "solo_baseline_results": null,
+      "difficulty": "medium",
+      "estimated_turns": 6
+    }
+  ],
+  "suite_metadata": {
+    "total_tasks": 60,
+    "tasks_per_family": {
+      "TF1_distributed_evidence": 10,
+      "TF2_incompatible_parallel": 10,
+      "TF3_sequential_handoffs": 10,
+      "TF4_role_constrained": 6,
+      "TF5_resource_contention": 9,
+      "TF6_convergence_traps": 15
+    },
+    "difficulty_distribution": {
+      "easy": 5,
+      "medium": 38,
+      "hard": 17
+    },
+    "solo_agent_firewall_protocol": {
+      "runs_required": 10,
+      "max_passing_runs": 2,
+      "models_to_test_against": ["gpt-4o", "claude-opus-4", "gemini-2.0-pro"],
+      "status": "all tasks pending validation — solo_baseline_results must be populated"
+    },
+    "programmatic_evaluator_types": {
+      "keyword_and_logic": "Checks for required keyword presence and absence in final answer",
+      "schema_check": "Verifies required fields/elements in a proposed schema or design",
+      "numeric_check": "Verifies numeric values are within tolerance of expected values",
+      "role_output_check": "Checks that agent outputs are consistent with their assigned role",
+      "config_check": "Verifies configuration file contains required fields",
+      "code_check": "Checks that code artifacts contain required functions/patterns",
+      "sql_check": "Verifies SQL artifacts contain required statements/constructs",
+      "text_check": "Checks for required sections and forbidden duplications in text",
+      "role_separation_check": "Verifies agents stay within their role domains",
+      "yaml_check": "Verifies YAML structure meets requirements",
+      "ranked_output": "Checks ordering/priority of recommendations"
+    }
+  }
+}
